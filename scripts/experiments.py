@@ -15,7 +15,7 @@ import statistics
 import subprocess
 import threading
 import time
-from urllib.error import URLError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 import uuid
 
@@ -101,7 +101,13 @@ def query(dsn, statement, params=None):
         connection.close()
 
 
-def api(path, method="GET", body=None, node=None):
+class PatroniAPIError(RuntimeError):
+    def __init__(self, node, method, path, status, detail):
+        self.status, self.detail = status, detail
+        super().__init__(f"Patroni {node}: {method} {path}: HTTP {status}: {detail}")
+
+
+def api(path, method="GET", body=None, node=None, timeout=4):
     nodes = (node,) if node else NODES
     last = None
     for member in nodes:
@@ -115,14 +121,26 @@ def api(path, method="GET", body=None, node=None):
         )
         request.add_header("Content-Type", "application/json")
         try:
-            with urlopen(request, timeout=4) as response:
+            with urlopen(request, timeout=timeout) as response:
                 text = response.read().decode()
                 try:
                     return json.loads(text)
                 except ValueError:
                     return {"response": text}
+        except HTTPError as error:
+            last = PatroniAPIError(
+                member, method, path, error.code,
+                error.read().decode("utf-8", errors="replace").strip(),
+            )
+            if node or method != "GET":
+                raise last from error
         except (OSError, URLError) as error:
             last = error
+            if method != "GET":
+                raise RuntimeError(
+                    f"Patroni {member}: {method} {path}: response not received; "
+                    "the operation may already have started"
+                ) from error
     raise RuntimeError(f"Patroni API is unavailable: {last}")
 
 
@@ -694,29 +712,50 @@ class Experiments:
         )
 
     def switchover(self):
+        wait_cluster()
         old = leader()
-        candidate = next(n for n in NODES if n != old)
-        old_ip, new_ip = self.address(old), self.address(candidate)
-        load = Workload("E4", self.window).start()
-        time.sleep(10)
-        fault_at = time.monotonic()
-        body = {"leader": old, "candidate": candidate}
-        self.output.append("POST /switchover " + json.dumps(body))
+        old_ip = self.address(old)
         self.output.append(
-            json.dumps(api("/switchover", "POST", body, node=old), ensure_ascii=False)
+            "GET /cluster " + json.dumps(api("/cluster", node=old), ensure_ascii=False)
         )
-        new = wait_new_leader(old)
-        if new != candidate:
-            raise RuntimeError("Switchover selected an unexpected candidate")
-        load.finish()
-        self.record_events(load.events)
+        load = Workload("E4", self.window).start()
+        try:
+            time.sleep(10)
+            deadline = time.monotonic() + 15
+            body = {"leader": old}
+            while True:
+                self.output.append("POST /switchover " + json.dumps(body))
+                fault_at = time.monotonic()
+                try:
+                    response = api("/switchover", "POST", body, node=old, timeout=60)
+                except PatroniAPIError as error:
+                    self.output.append(str(error))
+                    if (
+                        error.status != 412
+                        or "no good candidates have been found" not in error.detail
+                        or time.monotonic() >= deadline
+                    ):
+                        raise
+                    api("/primary", node=old)
+                    time.sleep(1)
+                    continue
+                self.output.append(json.dumps(response, ensure_ascii=False))
+                break
+            new = wait_new_leader(old)
+            new_ip = self.address(new)
+        except BaseException:
+            load.stop.set()
+            raise
+        finally:
+            load.finish()
+            self.record_events(load.events)
         metrics = load.metrics() | switching_metrics(
             load.events, old_ip, new_ip, fault_at
         )
         self.save(
             "Э4. Плановое переключение",
             metrics,
-            "Измерен перерыв между подтверждениями при плановой смене лидера.",
+            "Patroni выбрал готовую реплику. Измерен перерыв между подтверждениями при плановой смене лидера.",
             load.events,
         )
         wait_cluster()
