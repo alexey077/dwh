@@ -31,6 +31,52 @@ RO = "postgresql://postgres:postgres@localhost:5001/pos_service_db"
 POOL = "postgresql://postgres:postgres@localhost:6432/pos_service_db"
 
 
+METRIC_LABELS = {
+    'acknowledged': 'Подтверждено транзакций',
+    'errors': 'Ошибок',
+    'seconds': 'Длительность, с',
+    'tps': 'Транзакций в секунду',
+    'median_ms': 'Медианная задержка, мс',
+    'p95_ms': 'p95 задержки, мс',
+    'rto_seconds': 'Пауза записи (RTO), с',
+    'errors_in_gap': 'Ошибок за паузу',
+    'old_leader': 'Старый лидер',
+    'new_leader': 'Новый лидер',
+    'lost_acknowledged': 'Потеряно подтверждённых транзакций',
+    'last_old_ack': 'Последний ACK старого лидера (UTC)',
+    'first_new_ack': 'Первый ACK нового лидера (UTC)',
+    'seconds_until_caught_up': 'Время возврата и догона, с',
+    'role': 'Роль после возврата',
+    'wal_since_receiver_start_bytes': 'WAL от начала текущего приёма, байт',
+    'pg_rewind_call_in_log': 'pg_rewind найден в логе',
+    'async_tps': 'TPS async',
+    'sync_tps': 'TPS sync',
+    'async_p95_ms': 'p95 async, мс',
+    'sync_p95_ms': 'p95 sync, мс',
+    'async_rto': 'RTO async, с',
+    'sync_rto': 'RTO sync, с',
+    'async_lost': 'Потеряно подтверждений async',
+    'sync_lost': 'Потеряно подтверждений sync',
+    'one_node_loss_acknowledged': 'Подтверждено при потере одного etcd',
+    'one_node_loss_errors': 'Ошибок при потере одного etcd',
+    'two_node_loss_write_failure_seconds': 'Время до ошибки записи после потери второго etcd, с',
+    'replica_read_available': 'Чтение с реплики доступно',
+    'direct_first_error_at': 'Первое число клиентов с ошибкой напрямую',
+    'pool_first_error_at': 'Первое число клиентов с ошибкой через пул',
+    'direct_40_errors': 'Напрямую, 40 клиентов: ошибок',
+    'direct_40_connect_median_ms': 'Напрямую, 40 клиентов: медиана подключения, мс',
+    'pool_40_errors': 'Через пул, 40 клиентов: ошибок',
+    'pool_40_connect_median_ms': 'Через пул, 40 клиентов: медиана подключения, мс',
+    'direct_80_errors': 'Напрямую, 80 клиентов: ошибок',
+    'direct_80_connect_median_ms': 'Напрямую, 80 клиентов: медиана подключения, мс',
+    'pool_80_errors': 'Через пул, 80 клиентов: ошибок',
+    'pool_80_connect_median_ms': 'Через пул, 80 клиентов: медиана подключения, мс',
+    'direct_160_errors': 'Напрямую, 160 клиентов: ошибок',
+    'direct_160_connect_median_ms': 'Напрямую, 160 клиентов: медиана подключения, мс',
+    'pool_160_errors': 'Через пул, 160 клиентов: ошибок',
+    'pool_160_connect_median_ms': 'Через пул, 160 клиентов: медиана подключения, мс',
+}
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -362,7 +408,7 @@ class Experiments:
             raw.extend(json.dumps(asdict(e), ensure_ascii=False) for e in sample)
         self.sections.append((title, metrics, conclusion, raw))
         self.write_journal()
-        print(title, metrics, flush=True)
+        print(title + ": " + conclusion, flush=True)
 
     def write_journal(self, failure=None):
         lines = [
@@ -396,13 +442,15 @@ class Experiments:
                 f"--event-window {self.window}"
             )
             lines += [
-                "## " + title, "",
-                "Команда воспроизведения полного сценария; ниже приведён соответствующий этап:", "",
+                "## " + {"Э1. Async baseline": "Э1. Нагрузка без отказов (async)", "Э5. Sync baseline": "Э5.1. Нагрузка в синхронном режиме", "Э5. Sync failover": "Э5.2. Авария в синхронном режиме", "Э5. Возврат sync-узла": "Э5.3. Возврат узла", "Э5. Цена синхронной репликации": "Э5.4. Сравнение async и sync"}.get(title, title), "",
+                "Этап общего сценария:", "",
                 "```bash", command, "```", "",
                 "| Метрика | Значение |", "|---|---|",
             ]
-            lines += [f"| {key} | {value} |" for key, value in metrics.items()]
-            lines += ["", conclusion, "", "<details>", "<summary>Фрагмент исходного вывода</summary>", "", "```text", *raw, "```", "", "</details>", ""]
+            lines += [f"| {METRIC_LABELS.get(key, key)} | {value} |" for key, value in metrics.items()]
+            lines += ["", conclusion, ""]
+            if raw:
+                lines += ["<details>", "<summary>Фрагмент исходного вывода</summary>", "", "```text", *raw, "```", "", "</details>", ""]
         if failure:
             lines += [
                 "## Незавершённая проверка",
@@ -547,7 +595,8 @@ class Experiments:
         self.save(
             label,
             metrics,
-            "Измерены подтверждённые записи и задержки в указанном режиме.",
+            f"За {metrics['seconds']} с подтверждено {metrics['acknowledged']} транзакций. "
+            f"Скорость — {metrics['tps']} TPS, p95 — {metrics['p95_ms']} мс; ошибок — {metrics['errors']}.",
             load.events,
         )
         return metrics
