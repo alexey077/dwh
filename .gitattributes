@@ -1,0 +1,4 @@
+* text=auto eol=lf
+docs/failover_journal.md whitespace=-blank-at-eol
+docs/experiments/** whitespace=-blank-at-eol
+*.sh text eol=lf
