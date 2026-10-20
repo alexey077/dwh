@@ -122,6 +122,12 @@ with patch("experiments.urlopen", side_effect=[URLError("unreachable"), reply]) 
     assert api("/cluster") == {"members": []}
     assert request.call_count == 2
 
+reply = MagicMock()
+reply.__enter__.return_value.read.return_value = b'{"synchronous_mode": false}'
+with patch("experiments.urlopen", side_effect=[URLError("connection refused"), reply]) as request:
+    assert api("/config", "PATCH", {"synchronous_mode": False}) == {"synchronous_mode": False}
+    assert request.call_count == 2
+
 
 def check_switchover(rejections=(), permanent=None):
     with TemporaryDirectory() as directory, patch("experiments.ROOT", Path(directory)):

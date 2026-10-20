@@ -136,7 +136,7 @@ def api(path, method="GET", body=None, node=None, timeout=4):
                 raise last from error
         except (OSError, URLError) as error:
             last = error
-            if method != "GET":
+            if method == "POST":
                 raise RuntimeError(
                     f"Patroni {member}: {method} {path}: response not received; "
                     "the operation may already have started"
