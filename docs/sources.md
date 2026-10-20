@@ -11,11 +11,9 @@
 | [Семинар 2](https://github.com/mgcrp/hse_ftda_dwh_course_2026/tree/e97e7476cf9f5e456e950967d53afc48145d1f21/week02/sem) | Физическая репликация, PgBouncer, Patroni, etcd, HAProxy |
 | [Демонстрация Patroni](https://github.com/mgcrp/hse_ftda_dwh_course_2026/tree/e97e7476cf9f5e456e950967d53afc48145d1f21/week02/sem/demo4_ha_patroni) | Основа топологии и конфигурации кластера |
 
-Локальные рабочие источники: [конспект курса](context/course-context.md), [план](context/execution-plan.md), [прогресс](progress.md). Они помогают продолжать работу, но не заменяют исходное условие.
-
 Для вспомогательной проверки SQL в окружении без Docker использована [документация PGlite](https://pglite.dev/docs/pglite-socket) и [расширения btree_gist](https://pglite.dev/extensions/). Этот инструмент относится к локальной проверке, итоговый стенд строится на PostgreSQL и Patroni из семинара 2.
 
-Для проверки различий со штатным REST API использована [официальная документация Patroni 4.1.5](https://patroni.readthedocs.io/en/latest/rest_api.html#cluster-status-endpoints). Расхождение с чекером описано в `docs/checker_note.md`.
+Для проверки различий со штатным REST API использована [официальная документация Patroni 4.1.5](https://patroni.readthedocs.io/en/latest/rest_api.html#cluster-status-endpoints). Состояние процесса и репликации разделено в сервисе статуса; решение описано в [ADR 007](adr/007_cluster_status.md).
 
 Для проверки состава образа PgBouncer прочитаны [Dockerfile тега v1.25.2-p0](https://github.com/edoburu/docker-pgbouncer/blob/v1.25.2-p0/Dockerfile) и его entrypoint. Подтверждены пользователь `postgres`, наличие PostgreSQL client и возможность передать готовые конфигурационные файлы.
 

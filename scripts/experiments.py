@@ -402,7 +402,7 @@ class Experiments:
                 "| Метрика | Значение |", "|---|---|",
             ]
             lines += [f"| {key} | {value} |" for key, value in metrics.items()]
-            lines += ["", conclusion, "", "```text", *raw, "```", ""]
+            lines += ["", conclusion, "", "<details>", "<summary>Фрагмент исходного вывода</summary>", "", "```text", *raw, "```", "", "</details>", ""]
         if failure:
             lines += [
                 "## Незавершённая проверка",

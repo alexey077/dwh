@@ -2,7 +2,7 @@ name: hw1 verification
 
 "on":
   push:
-    branches: [hw1]
+    branches: [hw1, main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -29,7 +29,17 @@ jobs:
           python tests/check_measurements.py
           bash -n scripts/check.sh scripts/seed.sh scripts/wait_ready.sh scripts/verify.sh
           docker compose --profile tools config --quiet
-      - name: Full verification from empty volumes using the documented command
+      - name: Additional regression checks
+        run: |
+          docker compose up -d --build
+          ./scripts/wait_ready.sh
+          docker compose run --rm -T tools tests/check_cluster_status_unit.py
+          docker compose run --rm -T tools tests/check_concurrency.py
+          ./scripts/seed.sh --seed 42
+          docker compose run --rm -T tools tests/check_schema.py
+          docker compose run --rm -T tools tests/check_seed.py
+          docker compose run --rm -T tools tests/check_reverse_movements.py
+      - name: Full verification using the documented command
         run: ./scripts/verify.sh --full
       - name: Save container logs
         if: always()

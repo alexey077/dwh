@@ -11,12 +11,7 @@ fi
 docker compose up -d --build
 docker compose run --rm -T tools scripts/migrate.py
 ./scripts/wait_ready.sh
-docker compose run --rm -T tools tests/check_cluster_status_unit.py
-docker compose run --rm -T tools tests/check_concurrency.py
 ./scripts/seed.sh --seed 42
-docker compose run --rm -T tools tests/check_schema.py
-docker compose run --rm -T tools tests/check_seed.py
-docker compose run --rm -T tools tests/check_reverse_movements.py
 ./scripts/check.sh --verbose
 docker compose run --rm -T tools tests/assert_runtime_report.py reports/check_report.json
 
