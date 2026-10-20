@@ -31,6 +31,7 @@ jobs:
           docker compose --profile tools config --quiet
       - name: Additional regression checks
         run: |
+          mkdir -p reports
           docker compose up -d --build
           ./scripts/wait_ready.sh
           docker compose run --rm -T tools tests/check_cluster_status_unit.py
