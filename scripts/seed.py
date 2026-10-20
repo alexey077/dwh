@@ -813,6 +813,118 @@ class Foundation:
             batch_rows,
         )
 
+    def load_reverse_movements(self, cursor):
+        for reason in ("supplier_return", "damaged", "expired"):
+            suffix = f"{self.month:%Y%m}-{reason.upper()}"
+            batch, purchase = f"BATCH-REVERSE-{suffix}", f"PO-REVERSE-{suffix}"
+            received = (
+                self.start + timedelta(days=20, hours=10)
+                if reason == "expired"
+                else self.anchor - timedelta(days=20) + timedelta(hours=10)
+            )
+            expiry = (
+                received.date() + timedelta(days=30)
+                if reason == "expired"
+                else self.month + timedelta(days=365)
+            )
+            ordered = received - timedelta(days=3)
+            cursor.execute(
+                """INSERT INTO wms.batch
+                   (batch_bk,sku,series_no,manufactured_date,expiry_date,received_at,created_at,updated_at)
+                   VALUES (%s,'SKU-000001',%s,%s,%s,%s,%s,%s)""",
+                (
+                    batch,
+                    f"REVERSE-{suffix}",
+                    received.date() - timedelta(days=30),
+                    expiry,
+                    received,
+                    received,
+                    received,
+                ),
+            )
+            cursor.execute(
+                """INSERT INTO wms.purchase
+                   (purchase_bk,supplier_bk,dc_bk,ordered_at,expected_at,currency,created_at,updated_at)
+                   VALUES (%s,'SUP-001','DC-001',%s,%s,'RUB',%s,%s)""",
+                (purchase, ordered, received, ordered, ordered),
+            )
+            cursor.execute(
+                """INSERT INTO wms.purchase_line
+                   (purchase_bk,line_no,sku,batch_bk,received_at,quantity,unit_cost,line_cost,created_at,updated_at)
+                   VALUES (%s,1,'SKU-000001',%s,%s,20,50,1000,%s,%s)""",
+                (purchase, batch, received, ordered, received),
+            )
+            cursor.execute(
+                """INSERT INTO wms.movement
+                   (movement_bk,batch_bk,movement_type,src_type,src_bk,dst_type,dst_bk,qty,
+                    dispatched_at,moved_at,purchase_bk,purchase_line_no,created_at,updated_at)
+                   VALUES (%s,%s,'receipt','supplier','SUP-001','dc','DC-001',20,%s,%s,%s,1,%s,%s)""",
+                (
+                    f"MOV-IN-REVERSE-{suffix}",
+                    batch,
+                    ordered + timedelta(hours=12),
+                    received,
+                    purchase,
+                    received,
+                    received,
+                ),
+            )
+            if reason == "supplier_return":
+                source_type, source_bk, quantity = "dc", "DC-001", 10
+            else:
+                dispatched = received + timedelta(days=1)
+                arrived = dispatched + timedelta(hours=6)
+                cursor.execute(
+                    """INSERT INTO wms.movement
+                       (movement_bk,batch_bk,movement_type,src_type,src_bk,dst_type,dst_bk,qty,
+                        dispatched_at,moved_at,created_at,updated_at)
+                       VALUES (%s,%s,'transfer','dc','DC-001','pharmacy','PH-0001',10,%s,%s,%s,%s)""",
+                    (
+                        f"MOV-TR-REVERSE-{suffix}",
+                        batch,
+                        dispatched,
+                        arrived,
+                        arrived,
+                        arrived,
+                    ),
+                )
+                source_type, source_bk = "pharmacy", "PH-0001"
+                quantity = 10 if reason == "expired" else 4
+            occurred = (
+                datetime.combine(expiry + timedelta(days=1), time(12), UTC)
+                if reason == "expired"
+                else received + timedelta(days=3)
+            )
+            movement = f"MOV-OUT-REVERSE-{suffix}"
+            cursor.execute(
+                """INSERT INTO wms.movement
+                   (movement_bk,batch_bk,movement_type,src_type,src_bk,qty,
+                    dispatched_at,moved_at,created_at,updated_at)
+                   VALUES (%s,%s,'writeoff',%s,%s,%s,%s,%s,%s,%s)""",
+                (
+                    movement,
+                    batch,
+                    source_type,
+                    source_bk,
+                    quantity,
+                    occurred - timedelta(hours=1),
+                    occurred,
+                    occurred,
+                    occurred,
+                ),
+            )
+            cursor.execute(
+                """INSERT INTO wms.writeoff_detail(movement_bk,reason,supplier_bk,created_at,updated_at)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (
+                    movement,
+                    reason,
+                    "SUP-001" if reason == "supplier_return" else None,
+                    occurred,
+                    occurred,
+                ),
+            )
+
     def load(self, loader):
         parameters = {"kind": "foundation", "version": 1}
         for service, work in [
@@ -822,6 +934,15 @@ class Foundation:
             ("pos", lambda cursor: self.load_pos(cursor, loader)),
         ]:
             loader.step(service, "FOUNDATION", 0, 0, self.month, parameters, work)
+        loader.step(
+            "wms",
+            "REVERSE-FLOWS-V1",
+            0,
+            0,
+            self.month,
+            {"kind": "reverse_movements", "version": 1},
+            self.load_reverse_movements,
+        )
 
 
 def sync_references(cursor, loader):

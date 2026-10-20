@@ -38,10 +38,16 @@ jobs:
         run: python tests/check_cluster_status.py --probe-failure
       - name: Original HA checker
         run: ./scripts/check.sh --sections ha --json reports/ha_report.json
+      - name: Concurrent writeoffs and refunds on separate PostgreSQL backends
+        run: docker compose run --rm -T tools tests/check_concurrency.py
       - name: Generate full data
         run: ./scripts/seed.sh --seed 42
       - name: Source table prerequisites and application permissions
         run: docker compose run --rm -T tools tests/check_schema.py
+      - name: Repeated seed, explicit delta and automatic delta
+        run: docker compose run --rm -T tools tests/check_seed.py
+      - name: Supplier returns and writeoff constraints
+        run: docker compose run --rm -T tools tests/check_reverse_movements.py
       - name: Official checker and raw score
         id: official
         run: ./scripts/check.sh --verbose
