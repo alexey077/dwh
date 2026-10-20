@@ -71,8 +71,6 @@ python3 -m venv .venv
 
 Read-only статус для манифеста: `http://localhost:8011/cluster`; штатный ответ Patroni — `http://localhost:8011/native/cluster`. Поле state берётся из реального /patroni каждого узла, replication_state сохраняется отдельно. Остановка узла, неверная роль или отсутствие streaming у реплики даёт HTTP 503. [Выбор формата](docs/adr/007_cluster_status.md).
 
-Объединённый статус PostgreSQL и репликации: `http://localhost:8011/cluster`. Сервис опрашивает каждый узел и возвращает ошибку при его недоступности; формат описан в [ADR 007](docs/adr/007_cluster_status.md).
-
 Patroni API: `http://localhost:8008/cluster`, `http://localhost:8009/cluster`, `http://localhost:8010/cluster`. Изменение конфигурации API требует `patroni/patroni`. Статистика HAProxy: `http://localhost:7005/`. Порты опубликованы на loopback; пароли предназначены для учебного локального стенда.
 
 
