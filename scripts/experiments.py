@@ -568,7 +568,7 @@ class Experiments:
             "SELECT pg_wal_lsn_diff(pg_last_wal_replay_lsn(),receive_start_lsn) FROM pg_stat_wal_receiver",
         )[0][0]
         logs = self.command(
-            ["logs", "--no-color", "--since", since, "--tail", "80", old]
+            ["logs", "--no-color", "--since", since, old]
         )
         rewind = any(
             s in logs.lower()
