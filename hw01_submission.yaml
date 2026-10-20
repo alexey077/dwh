@@ -33,9 +33,11 @@ connections:
     wms: "postgresql://test_writer:test_writer@localhost:6432/wms_service_db"
 
 invariants:
+  # I1 проверяет уникальность business key catalog.sku.sku.
   I1: {service: catalog, file: tests/invariants/I1_bk_unique.sql, expect_sqlstate: "23505"}
   I2: {service: catalog, file: tests/invariants/I2_bk_immutable.sql, expect_sqlstate: "P0001"}
   I3: {service: pos, file: tests/invariants/I3_receipt_total.sql, expect_sqlstate: "P0001"}
+  # I4 нарушает line_amount = quantity * unit_price - line_discount: 99 вместо 100.
   I4: {service: pos, file: tests/invariants/I4_line_math.sql, expect_sqlstate: "23514"}
   I5: {service: catalog, file: tests/invariants/I5_price_overlap.sql, expect_sqlstate: "23P01"}
   I6: {service: catalog, file: tests/invariants/I6_single_current.sql, expect_sqlstate: "23505"}
