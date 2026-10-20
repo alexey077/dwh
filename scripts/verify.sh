@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+mkdir -p reports
 
 if [[ $# -gt 1 || ( $# -eq 1 && "$1" != "--full" ) ]]; then
     printf 'Usage: ./scripts/verify.sh [--full]\n' >&2
