@@ -100,7 +100,7 @@ CRM хранит клиентов, контакты, согласия и кар�
 
 ## Документация
 
-- ER-модели: [CRM](docs/erd/crm.md), [каталог](docs/erd/catalog.md), [POS](docs/erd/pos.md), [WMS](docs/erd/wms.md).
+- ER-модели: [CRM](docs/erd/crm.md), [каталог](docs/erd/catalog.md), [POS](docs/erd/pos.md), [WMS](docs/erd/wms.md), [общие технические таблицы](docs/erd/core.md).
 - [Архитектурные решения](docs/adr/) и [карта склейки для DWH](docs/dwh_mapping.md).
 - [Соответствие заданию](docs/requirements.md) и [источники](docs/sources.md).
 
