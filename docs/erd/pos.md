@@ -5,6 +5,7 @@
 ```mermaid
 erDiagram
     PHARMACY ||--o{ CASH_REGISTER : registers
+    PHARMACY ||--|{ PHARMACY_HISTORY : versions
     CASH_REGISTER ||--o{ SHIFT : shifts
     CASHIER ||--o{ SHIFT : works
     SHIFT ||--o{ RECEIPT : documents
@@ -18,6 +19,12 @@ erDiagram
         date closed_at "nullable"
         boolean is_active
         boolean is_deleted
+    }
+    PHARMACY_HISTORY {
+        text pharmacy_bk PK,FK
+        timestamptz valid_from PK
+        timestamptz valid_to "nullable"
+        jsonb attributes
     }
     CASH_REGISTER {
         text register_bk PK
@@ -98,13 +105,44 @@ erDiagram
     }
 ```
 
-Остальные таблицы:
+Локальные версии каталога и связь с позицией:
 
-| Таблица | Ключ | Обязательные поля | Необязательные поля |
-|---|---|---|---|
-| `pharmacy_history` | `(pharmacy_bk text FK, valid_from timestamptz)` PK | `attributes jsonb` | `valid_to timestamptz` |
-| `sku_reference` | `(sku text, valid_from timestamptz)` PK | `sku_name text`, `is_rx boolean` | `valid_to timestamptz` |
-| `price_reference` | `price_bk text` PK | `sku text`, `price_scope text`, `scope_bk text`, `price numeric(14,2)`, `currency text`, `valid_from timestamptz` | `valid_to timestamptz` |
+```mermaid
+erDiagram
+    CAT_SKU ||..o{ SKU_REFERENCE : logical_sku
+    CAT_PRICE ||..o| PRICE_REFERENCE : logical_price
+    PRICE_REFERENCE ||--o{ RECEIPT_LINE : price_version
+    CAT_SKU {
+        text sku PK "external CAT BK"
+    }
+    CAT_PRICE {
+        text price_bk PK "external CAT BK"
+    }
+    SKU_REFERENCE {
+        text sku PK "logical CAT BK"
+        timestamptz valid_from PK
+        timestamptz valid_to "nullable"
+        text sku_name
+        boolean is_rx
+    }
+    PRICE_REFERENCE {
+        text price_bk PK
+        text sku "logical CAT BK"
+        text price_scope
+        text scope_bk "ALL, region or logical POS pharmacy BK"
+        numeric price
+        text currency
+        timestamptz valid_from
+        timestamptz valid_to "nullable"
+    }
+    RECEIPT_LINE {
+        text receipt_bk PK,FK
+        int line_no PK
+        text price_bk FK
+    }
+```
+
+Пунктир обозначает логический BK между сервисами. Физический FK price_bk ведёт к локальной PRICE_REFERENCE; версия SKU выбирается по SKU и времени продажи.
 
 Локальные ссылки `batch_reference`, `sku_reference`, `price_reference` наполняются из WMS и каталога приложением. Физические FK ведут только к этим копиям внутри POS. Первичные владельцы BK остаются в исходных сервисах.
 

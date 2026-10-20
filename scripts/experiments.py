@@ -6,6 +6,7 @@ from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 import json
 import math
+import platform
 from ipaddress import ip_interface
 from pathlib import Path
 import shlex
@@ -242,6 +243,8 @@ def switching_metrics(events, old_ip, new_ip, fault_at):
 class Experiments:
     def __init__(self, seconds, window):
         self.seconds, self.window = seconds, window
+        self.completed = False
+        self.machine = {}
         self.sections = []
         self.directory = (
             ROOT
@@ -374,8 +377,30 @@ class Experiments:
             "Он включает дискретность нагрузки. Потеря проверяется только для транзакций, подтверждённых клиенту.",
             "",
         ]
+        lines += ["## 0. Стенд", "", "| Параметр | Значение |", "|---|---|"]
+        lines += [f"| {name} | {str(value).replace('|', '/')} |" for name, value in self.machine.items()]
+        lines += [
+            "", "```mermaid", "flowchart TD",
+            '    client["Клиент"] --> pool["PgBouncer :6432"]',
+            '    pool --> proxy["HAProxy :5000 / :5001"]',
+            '    proxy --> pg1["pg1 / Patroni"]',
+            '    proxy --> pg2["pg2 / Patroni"]',
+            '    proxy --> pg3["pg3 / Patroni"]',
+            '    pg1 -.-> dcs["etcd1 + etcd2 + etcd3, кворум 2/3"]',
+            "    pg2 -.-> dcs", "    pg3 -.-> dcs", "```", "",
+            "Нагрузка записи: 4 клиента, INSERT + COMMIT и пауза после успеха 20 мс.", "",
+        ]
         for title, metrics, conclusion, raw in self.sections:
-            lines += ["## " + title, "", "| Метрика | Значение |", "|---|---|"]
+            command = (
+                f".venv/bin/python scripts/experiments.py --seconds {self.seconds} "
+                f"--event-window {self.window}"
+            )
+            lines += [
+                "## " + title, "",
+                "Команда воспроизведения полного сценария; ниже приведён соответствующий этап:", "",
+                "```bash", command, "```", "",
+                "| Метрика | Значение |", "|---|---|",
+            ]
             lines += [f"| {key} | {value} |" for key, value in metrics.items()]
             lines += ["", conclusion, "", "```text", *raw, "```", ""]
         if failure:
@@ -437,18 +462,33 @@ class Experiments:
             "Репликация не восстанавливает случайное логическое удаление и не заменяет резервные копии. "
             "В этом стенде HAProxy и PgBouncer по одному экземпляру; отказ целого узла Docker или ЦОД отдельно не моделируется.",
         ]
+        lines += [
+            "", "## Пояснения к измерениям", "",
+            "Аварийный RTO включает обнаружение отказа, ожидание лидерского TTL, promotion "
+            "и восстановление клиентского маршрута. При switchover лидер передаёт роль сам. "
+            "RTO между ACK включает дискретность нагрузки.", "",
+            "Async/sync сравнивались одним последовательным прогоном на разных лидерах. "
+            "Меньший p95 sync не означает ускорения записи. Нулевая потеря async в одном "
+            "опыте не гарантирует сохранность последнего WAL при другой аварии.", "",
+            "WAL при rejoin отсчитывается от start LSN текущего receiver, это не полный объём "
+            "pg_rewind; способ восстановления подтверждают строки Patroni. В Э6 время включает "
+            "остановку второго etcd и проверку чтения. В Э7 время подключения не включает "
+            "всё ожидание выполнения транзакции.", "",
+        ]
         target = ROOT / "docs/failover_journal.md"
         if not self.sections:
             if failure:
                 (self.archive / "failure.md").write_text("\n".join(lines) + "\n")
             return
-        target.write_text("\n".join(lines) + "\n")
-        (self.directory / "journal.md").write_text(target.read_text())
-        (self.archive / "journal.md").write_text(target.read_text())
+        text = "\n".join(lines) + "\n"
+        (self.directory / "journal.md").write_text(text)
+        (self.archive / "journal.md").write_text(text)
+        if self.completed and not failure:
+            target.write_text(text)
 
     def prepare(self):
-        self.command(["version"])
-        self.docker(
+        compose_version = self.command(["version"])
+        docker_info = self.docker(
             [
                 "info",
                 "--format",
@@ -464,6 +504,15 @@ class Experiments:
             "Patroni: "
             + json.dumps(api("/patroni").get("patroni", {}), ensure_ascii=False),
         ]
+        disk = shutil.disk_usage(ROOT)
+        self.machine = {
+            "ОС скрипта": platform.platform(),
+            "Docker Compose": compose_version,
+            "Ресурсы Docker": docker_info,
+            "PostgreSQL": query(RW, "SELECT version()")[0][0],
+            "Patroni": json.dumps(api("/patroni").get("patroni", {})),
+            "Диск проекта: всего / свободно, байт": f"{disk.total} / {disk.free}",
+        }
         self.original = api("/config")
         api(
             "/config",
@@ -810,7 +859,11 @@ class Experiments:
         finally:
             try:
                 self.restore()
+            except Exception as error:
+                failure = error
+                raise
             finally:
+                self.completed = failure is None
                 self.write_journal(failure)
 
 
