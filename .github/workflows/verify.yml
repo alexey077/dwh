@@ -27,26 +27,29 @@ jobs:
           python -m compileall -q scripts tests
           python hw01/hw01_check.py --self-test
           python tests/check_measurements.py
+          python tests/check_cluster_status_unit.py
           docker compose --profile tools config --quiet
           mkdir -p reports
       - name: Start from empty volumes
         run: |
           docker compose up -d --build
           ./scripts/wait_ready.sh
+      - name: Live process status and unavailable-node rejection
+        run: python tests/check_cluster_status.py --probe-failure
+      - name: Original HA checker
+        run: ./scripts/check.sh --sections ha --json reports/ha_report.json
       - name: Generate full data
         run: ./scripts/seed.sh --seed 42
       - name: Source table prerequisites and application permissions
         run: docker compose run --rm -T tools tests/check_schema.py
       - name: Official checker and raw score
         id: official
-        continue-on-error: true
         run: ./scripts/check.sh --verbose
-      - name: Runtime assertions and documented checker discrepancy
+      - name: Require every original runtime check
         run: python tests/assert_runtime_report.py reports/check_report.json
       - name: Experiments E1 to E7
         run: python scripts/experiments.py
       - name: Official checker after failures
-        continue-on-error: true
         run: ./scripts/check.sh --verbose --json reports/check_after_failures.json
       - name: Runtime assertions after failures
         run: python tests/assert_runtime_report.py reports/check_after_failures.json

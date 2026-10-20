@@ -55,7 +55,7 @@ ha:
   pooler_dsn: "postgresql://checker:checker@localhost:6432/pos_service_db"
   haproxy_rw_dsn: "postgresql://checker:checker@localhost:5000/pos_service_db"
   haproxy_ro_dsn: "postgresql://checker:checker@localhost:5001/pos_service_db"
-  patroni_api: "http://localhost:8008"
+  patroni_api: "http://localhost:8011"
   expected_members: 3
   journal: docs/failover_journal.md
 

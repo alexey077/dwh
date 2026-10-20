@@ -20,3 +20,5 @@
 Для проверки состава образа PgBouncer прочитаны [Dockerfile тега v1.25.2-p0](https://github.com/edoburu/docker-pgbouncer/blob/v1.25.2-p0/Dockerfile) и его entrypoint. Подтверждены пользователь `postgres`, наличие PostgreSQL client и возможность передать готовые конфигурационные файлы.
 
 При исправлении измерений failover использована [документация PostgreSQL 18 по сетевым функциям](https://www.postgresql.org/docs/18/functions-net.html): приведение `inet` к `text` включает маску, а `host(inet)` возвращает адрес без маски.
+
+При разделении состояния процесса PostgreSQL и состояния репликации использованы [объяснение разработчика Patroni](https://github.com/patroni/patroni/discussions/3342) и [исходная функция cluster_as_json версии 4.1.5](https://github.com/patroni/patroni/blob/v4.1.5/patroni/utils.py). Сервис наблюдения получает живые ответы /patroni каждого узла; источник поля state указан в ответе API и ADR 007.
