@@ -77,6 +77,15 @@ METRIC_LABELS = {
     'pool_160_connect_median_ms': 'Через пул, 160 клиентов: медиана подключения, мс',
 }
 
+JOURNAL_TITLES = {
+    "Э1. Async baseline": "Э1. Нагрузка без отказов (async)",
+    "Э5. Sync baseline": "Э5.1. Нагрузка в синхронном режиме",
+    "Э5. Sync failover": "Э5.2. Авария в синхронном режиме",
+    "Э5. Возврат sync-узла": "Э5.3. Возврат узла",
+    "Э5. Цена синхронной репликации": "Э5.4. Сравнение async и sync",
+}
+
+
 def now():
     return datetime.now(timezone.utc).isoformat()
 
@@ -408,7 +417,7 @@ class Experiments:
             raw.extend(json.dumps(asdict(e), ensure_ascii=False) for e in sample)
         self.sections.append((title, metrics, conclusion, raw))
         self.write_journal()
-        print(title + ": " + conclusion, flush=True)
+        print(JOURNAL_TITLES.get(title, title) + ": " + conclusion, flush=True)
 
     def write_journal(self, failure=None):
         lines = [
@@ -442,7 +451,7 @@ class Experiments:
                 f"--event-window {self.window}"
             )
             lines += [
-                "## " + {"Э1. Async baseline": "Э1. Нагрузка без отказов (async)", "Э5. Sync baseline": "Э5.1. Нагрузка в синхронном режиме", "Э5. Sync failover": "Э5.2. Авария в синхронном режиме", "Э5. Возврат sync-узла": "Э5.3. Возврат узла", "Э5. Цена синхронной репликации": "Э5.4. Сравнение async и sync"}.get(title, title), "",
+                "## " + JOURNAL_TITLES.get(title, title), "",
                 "Этап общего сценария:", "",
                 "```bash", command, "```", "",
                 "| Метрика | Значение |", "|---|---|",
@@ -492,7 +501,8 @@ class Experiments:
                 else None
             )
             lines += [
-                f"Отношение аварийного RTO к плановому: {ratio if ratio is not None else 'не определено'}.",
+                f"Аварийное переключение было в {ratio:.2f} раза дольше планового."
+                if ratio is not None else "Отношение RTO не определено.",
                 "",
             ]
         if synchronous and flood:
