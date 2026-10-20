@@ -3,8 +3,10 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from uuid import uuid4
 
 import psycopg2
+from psycopg2.extensions import make_dsn
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,11 +14,20 @@ sys.path.insert(0, str(ROOT / "hw01"))
 from hw01_check import digest_sql
 
 
+def service_dsn(service):
+    return os.environ.get(f"{service.upper()}_TEST_DSN") or make_dsn(
+        os.environ.get(
+            "ADMIN_DSN", "postgresql://postgres:postgres@localhost:5000/postgres"
+        ),
+        dbname=f"{service}_service_db",
+    )
+
+
 def snapshot():
     contract = yaml.safe_load((ROOT / "hw01/hw01_contract.yaml").read_text())
     result = {}
     for service, spec in contract["services"].items():
-        with psycopg2.connect(os.environ[f"{service.upper()}_TEST_DSN"]) as connection:
+        with psycopg2.connect(service_dsn(service)) as connection:
             with connection.cursor() as cursor:
                 for view in spec["views"]:
                     cursor.execute(digest_sql(view))
@@ -33,7 +44,7 @@ def seed(*arguments):
 
 
 def reconcile():
-    with psycopg2.connect(os.environ["WMS_TEST_DSN"]) as connection:
+    with psycopg2.connect(service_dsn("wms")) as connection:
         with connection.cursor() as cursor:
             cursor.execute("""SELECT external_doc_bk,batch_bk,movement_type,sum(qty)
                 FROM wms.movement WHERE movement_type IN ('sale_writeoff','return') GROUP BY 1,2,3""")
@@ -57,7 +68,7 @@ def reconcile():
                 "SELECT reference_month FROM core.seed_run WHERE batch_bk='FOUNDATION'"
             )
             assert latest == cursor.fetchone()[0]
-    with psycopg2.connect(os.environ["POS_TEST_DSN"]) as connection:
+    with psycopg2.connect(service_dsn("pos")) as connection:
         with connection.cursor() as cursor:
             cursor.execute("""SELECT l.receipt_bk,l.batch_bk,
                 CASE r.doc_type WHEN 'sale' THEN 'sale_writeoff' ELSE 'return' END,sum(l.quantity)
@@ -76,15 +87,16 @@ parser.add_argument("--receipts", type=int, default=24000)
 parser.add_argument("--smoke", action="store_true")
 args = parser.parse_args()
 count = args.receipts
+explicit_batch = "DELTA-VERIFY-" + uuid4().hex[:12]
 seed("--seed", "42", "--receipts", str(count))
 before = snapshot()
 seed("--seed", "42", "--receipts", str(count))
 assert before == snapshot(), "Same batch changed contract fingerprints"
 print("Same-seed idempotence: all 14 fingerprints unchanged")
-seed("--seed", "777", "--receipts", "500", "--batch-id", "DELTA-TEST")
+seed("--seed", "777", "--receipts", "500", "--batch-id", explicit_batch)
 after = snapshot()
 assert after["pos.v_receipt"][0] == before["pos.v_receipt"][0] + 500
-seed("--seed", "777", "--receipts", "500", "--batch-id", "DELTA-TEST")
+seed("--seed", "777", "--receipts", "500", "--batch-id", explicit_batch)
 assert after == snapshot(), "Repeated explicit delta changed the data"
 seed("--seed", "777", "--receipts", "500", "--next-batch")
 assert snapshot()["pos.v_receipt"][0] == after["pos.v_receipt"][0] + 500

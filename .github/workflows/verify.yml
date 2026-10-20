@@ -2,7 +2,7 @@ name: hw1 verification
 
 "on":
   push:
-    branches: [hw1]
+    branches: [hw1, main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -21,35 +21,26 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Dependencies and syntax
+      - name: Dependencies, source checks and configuration
         run: |
           python -m pip install -r requirements.txt
           python -m compileall -q scripts tests
           python hw01/hw01_check.py --self-test
           python tests/check_measurements.py
+          bash -n scripts/check.sh scripts/seed.sh scripts/wait_ready.sh scripts/verify.sh
           docker compose --profile tools config --quiet
-          mkdir -p reports
-      - name: Start from empty volumes
+      - name: Additional regression checks
         run: |
           docker compose up -d --build
           ./scripts/wait_ready.sh
-      - name: Generate full data
-        run: ./scripts/seed.sh --seed 42
-      - name: Source table prerequisites and application permissions
-        run: docker compose run --rm -T tools tests/check_schema.py
-      - name: Official checker and raw score
-        id: official
-        continue-on-error: true
-        run: ./scripts/check.sh --verbose
-      - name: Runtime assertions and documented checker discrepancy
-        run: python tests/assert_runtime_report.py reports/check_report.json
-      - name: Experiments E1 to E7
-        run: python scripts/experiments.py
-      - name: Official checker after failures
-        continue-on-error: true
-        run: ./scripts/check.sh --verbose --json reports/check_after_failures.json
-      - name: Runtime assertions after failures
-        run: python tests/assert_runtime_report.py reports/check_after_failures.json
+          docker compose run --rm -T tools tests/check_cluster_status_unit.py
+          docker compose run --rm -T tools tests/check_concurrency.py
+          ./scripts/seed.sh --seed 42
+          docker compose run --rm -T tools tests/check_schema.py
+          docker compose run --rm -T tools tests/check_seed.py
+          docker compose run --rm -T tools tests/check_reverse_movements.py
+      - name: Full verification using the documented command
+        run: ./scripts/verify.sh --full
       - name: Save container logs
         if: always()
         run: |

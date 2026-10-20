@@ -1,540 +1,353 @@
 # Журнал отказоустойчивости
 
-Время формирования: 2026-10-20T10:32:59.223451+00:00
+Эксперименты выполнены 20 октября 2026 года в [GitHub Actions](https://github.com/alexey077/dwh/actions/runs/39422163373). Проверялся код `66cc8f8`. До и после отказов официальный чекер прошёл 139 из 139 проверок.
 
-Топология: 3 PostgreSQL 18 под Patroni 4.1.5, 3 etcd, HAProxy и PgBouncer. Режим в начале экспериментов — async. Параметры Patroni: ttl=30, loop_wait=10, retry_timeout=10.
+Полный исходный журнал с необрезанными фрагментами вывода сохранён [отдельно](experiments/20261020T122916Z-ci-complete.md). Здесь оставлены результаты и короткие фрагменты, по которым видно поведение стенда.
 
-RTO — интервал между последним подтверждением старого лидера и первым подтверждением нового. Он включает дискретность нагрузки. Потеря проверяется только для транзакций, подтверждённых клиенту.
+Для воспроизведения всех этапов:
 
-## Э1. Async baseline
+```bash
+./scripts/verify.sh --full
+```
+
+Нагрузка записи: четыре клиента, INSERT и COMMIT, пауза после успешной записи 20 мс. RTO измеряется между последним подтверждением старого лидера и первым подтверждением нового. Потери считаются только среди подтверждённых клиенту транзакций.
+
+## 0. Стенд
+
+| Параметр | Значение |
+|---|---|
+| ОС скрипта | Linux-6.17.0-1022-azure-x86_64-with-glibc2.39 |
+| Docker Compose | Docker Compose version v2.38.2 |
+| Ресурсы Docker | CPU=4 RAM=16766414848 OS=Ubuntu 24.04.5 LTS ARCH=x86_64 Docker=28.0.4 Storage=overlay2 |
+| PostgreSQL | PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on x86_64-pc-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit |
+| Patroni | {"version": "4.1.5", "scope": "apteka108", "name": "pg1"} |
+| Диск проекта: всего / свободно, байт | 154894188544 / 89148792832 |
+
+```mermaid
+flowchart TD
+    client["Клиент"] --> pool["PgBouncer :6432"]
+    pool --> proxy["HAProxy :5000 / :5001"]
+    proxy --> pg1["pg1 / Patroni"]
+    proxy --> pg2["pg2 / Patroni"]
+    proxy --> pg3["pg3 / Patroni"]
+    pg1 -.-> dcs["etcd1 + etcd2 + etcd3, кворум 2/3"]
+    pg2 -.-> dcs
+    pg3 -.-> dcs
+```
+
+Нагрузка записи: 4 клиента, INSERT + COMMIT и пауза после успеха 20 мс.
+
+
+## Э1. Нагрузка без отказов (async)
+
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
 
 | Метрика | Значение |
 |---|---|
-| acknowledged | 8528 |
-| errors | 0 |
-| seconds | 60.014 |
-| tps | 142.101 |
-| median_ms | 3.85 |
-| p95_ms | 10.085 |
+| Подтверждено транзакций | 10919 |
+| Ошибок | 0 |
+| Длительность, с | 60.018 |
+| Транзакций в секунду | 181.929 |
+| Медианная задержка, мс | 1.728 |
+| p95 задержки, мс | 2.571 |
 
-Измерены подтверждённые записи и задержки в указанном режиме.
+Без отказов асинхронный кластер обработал 181,929 транзакции в секунду без ошибок. Это исходный уровень для сравнения с синхронным режимом.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
 
 ```text
 $ docker compose version
-Docker Compose version v5.1.4
-$ docker info --format 'CPU={{.NCPU}} RAM={{.MemTotal}} OS={{.OperatingSystem}} ARCH={{.Architecture}} Docker={{.ServerVersion}} Storage={{.Driver}}'
-CPU=8 RAM=4108828672 OS=Docker Desktop ARCH=aarch64 Docker=29.5.2 Storage=overlayfs
-SELECT version(): PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
-Patroni: {"version": "4.1.5", "scope": "apteka108", "name": "pg1"}
-{"at": "2026-10-20T10:24:51.174311+00:00", "monotonic": 1352546.439117291, "duration_ms": 89.03837506659329, "ok": true, "key": "Э1. Async baseline-554d048a61c5456cac1843d2203e7c8a", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:24:51.175331+00:00", "monotonic": 1352546.440165541, "duration_ms": 90.72233294136822, "ok": true, "key": "Э1. Async baseline-54dd2c3e81f44a35b32b95b207a49ffd", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:24:51.190376+00:00", "monotonic": 1352546.4552095, "duration_ms": 108.5220838431269, "ok": true, "key": "Э1. Async baseline-0cb9272c1ff94efd89cb3bdf4bf873f2", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:24:51.190702+00:00", "monotonic": 1352546.455540875, "duration_ms": 105.66504206508398, "ok": true, "key": "Э1. Async baseline-e63934a66243459d94380f1be82300ba", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:24:51.209269+00:00", "monotonic": 1352546.474102875, "duration_ms": 12.329458957538009, "ok": true, "key": "Э1. Async baseline-16f0b98535854271935f650980a73903", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:24:51.223022+00:00", "monotonic": 1352546.487856875, "duration_ms": 24.519499856978655, "ok": true, "key": "Э1. Async baseline-eff9f5158a674bfc999d8ef71338fb18", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:25:51.045017+00:00", "monotonic": 1352606.309128833, "duration_ms": 2.735000103712082, "ok": true, "key": "Э1. Async baseline-49970671f8fa4d399b650c99efdc62ae", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:25:51.045782+00:00", "monotonic": 1352606.309894208, "duration_ms": 2.672542119398713, "ok": true, "key": "Э1. Async baseline-7e72685597e54fd19648e880f1d137ce", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:25:51.060708+00:00", "monotonic": 1352606.324817208, "duration_ms": 2.7980830054730177, "ok": true, "key": "Э1. Async baseline-e76e12173f3d427c8f6544553aec5697", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:25:51.068145+00:00", "monotonic": 1352606.332255833, "duration_ms": 3.085375064983964, "ok": true, "key": "Э1. Async baseline-7892ee7dfb22415880c5d5c9120d764a", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:25:51.069887+00:00", "monotonic": 1352606.333998666, "duration_ms": 2.6582079008221626, "ok": true, "key": "Э1. Async baseline-82bc06a5a2c6490fb852941747430b85", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:25:51.072687+00:00", "monotonic": 1352606.336799458, "duration_ms": 2.047999994829297, "ok": true, "key": "Э1. Async baseline-57fc7dab25d4426b8e98ff4b9c6ac428", "node": "172.18.0.7", "error": ""}
+Docker Compose version v2.38.2
+…
+{"at": "2026-10-20T12:30:17.169718+00:00", "monotonic": 483.56754562, "duration_ms": 1.6413249999800428, "ok": true, "key": "Э1. Async baseline-508652eaea404c1a810071b57c1e36c2", "node": "172.18.0.6", "error": ""}
+{"at": "2026-10-20T12:30:17.170522+00:00", "monotonic": 483.568350242, "duration_ms": 1.9232789999819033, "ok": true, "key": "Э1. Async baseline-b9d9174eac2744949fef7101c0be8649", "node": "172.18.0.6", "error": ""}
 ```
+
+</details>
+
 
 ## Э2. Аварийная потеря лидера
 
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
+
 | Метрика | Значение |
 |---|---|
-| acknowledged | 7730 |
-| errors | 276 |
-| seconds | 90.007 |
-| tps | 85.882 |
-| median_ms | 4.147 |
-| p95_ms | 11.987 |
-| last_old_ack | 2026-10-20T10:26:02.219147+00:00 |
-| first_new_ack | 2026-10-20T10:26:37.173038+00:00 |
-| rto_seconds | 34.953 |
-| errors_in_gap | 276 |
-| old_leader | pg3 |
-| new_leader | pg1 |
-| lost_acknowledged | 0 |
+| Подтверждено транзакций | 10215 |
+| Ошибок | 278 |
+| Длительность, с | 90.02 |
+| Транзакций в секунду | 113.475 |
+| Медианная задержка, мс | 1.784 |
+| p95 задержки, мс | 2.543 |
+| Последний ACK старого лидера (UTC) | 2026-10-20T12:30:27.555054+00:00 |
+| Первый ACK нового лидера (UTC) | 2026-10-20T12:31:01.357936+00:00 |
+| Пауза записи (RTO), с | 33.803 |
+| Ошибок за паузу | 278 |
+| Старый лидер | pg2 |
+| Новый лидер | pg3 |
+| Потеряно подтверждённых транзакций | 0 |
 
-Новым лидером стал pg1. Потери подтверждённых транзакций сверены по probe_bk.
+После аварийного завершения лидера Patroni выбрал новый узел. Пауза между подтверждёнными записями составила 33,803 с; клиенту потребовалось переподключение.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
 
 ```text
-$ docker compose ps -q pg3
-ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-$ docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-172.18.0.7
-$ docker compose ps -q pg3
-ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-$ docker inspect --format '{{json .HostConfig.RestartPolicy}}' ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-{"Name":"unless-stopped","MaximumRetryCount":0}
-$ docker update --restart=no ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-$ docker kill --signal=KILL ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-$ docker compose ps -q pg1
-7bc61818518d79d20ec1177894a11202594677323bb333e4a67cf32706bda3f7
-$ docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 7bc61818518d79d20ec1177894a11202594677323bb333e4a67cf32706bda3f7
-172.18.0.6
-Leader addresses: pg3=172.18.0.7, pg1=172.18.0.6
-$ docker compose logs --no-color --tail 50 pg1
-pg1-1  | 2026-10-20 10:26:02.293 UTC [39] DETAIL:  Last completed transaction was at log time 2026-10-20 10:26:02.216892+00.
-pg1-1  | 2026-10-20 10:26:02.304 UTC [5053] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg3" (172.18.0.7), port 5432 failed: Connection refused
-pg1-1  | 		Is the server running on that host and accepting TCP/IP connections?
-pg1-1  | 2026-10-20 10:26:02.305 UTC [41] LOG:  waiting for WAL to become available at 0/18C478E8
-pg1-1  | 2026-10-20 10:26:11.429 UTC [5061] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg3" (198.18.211.81), port 5432 failed: server closed the connection unexpectedly
-pg1-1  | 		This probably means the server terminated abnormally
-pg1-1  | 		before or while processing the request.
-pg1-1  | 2026-10-20 10:26:11.431 UTC [41] LOG:  waiting for WAL to become available at 0/18C478E8
-pg1-1  | 2026-10-20 10:26:11,529 INFO: no action. I am (pg1), a secondary, and following a leader (pg3)
-pg1-1  | 2026-10-20 10:26:16.005 UTC [5069] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg3" (198.18.211.81), port 5432 failed: server closed the connection unexpectedly
-pg1-1  | 		This probably means the server terminated abnormally
-pg1-1  | 		before or while processing the request.
-pg1-1  | 2026-10-20 10:26:16.014 UTC [41] LOG:  waiting for WAL to become available at 0/18C478E8
-pg1-1  | 2026-10-20 10:26:20.998 UTC [5076] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg3" (198.18.211.81), port 5432 failed: server closed the connection unexpectedly
-pg1-1  | 		This probably means the server terminated abnormally
-pg1-1  | 		before or while processing the request.
-pg1-1  | 2026-10-20 10:26:21.001 UTC [41] LOG:  waiting for WAL to become available at 0/18C478E8
-pg1-1  | 2026-10-20 10:26:21,469 INFO: no action. I am (pg1), a secondary, and following a leader (pg3)
-pg1-1  | 2026-10-20 10:26:25.964 UTC [5084] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg3" (198.18.211.81), port 5432 failed: server closed the connection unexpectedly
-pg1-1  | 		This probably means the server terminated abnormally
-pg1-1  | 		before or while processing the request.
-pg1-1  | 2026-10-20 10:26:25.971 UTC [41] LOG:  waiting for WAL to become available at 0/18C478E8
-pg1-1  | 2026-10-20 10:26:30,913 INFO: Got response from pg2 http://pg2:8008/patroni: {"state": "running", "postmaster_start_time": "2026-10-20 09:36:04.058426+00:00", "role": "replica", "server_version": 180006, "xlog": {"received_location": 415529168, "replayed_location": 415529168, "replayed_timestamp": "2026-10-20 10:26:02.216892+00:00", "paused": false}, "timeline": 3, "cluster_unlocked": true, "dcs_last_seen": 1792491990, "database_system_identifier": "7698678148821708832", "patroni": {"version": "4.1.5", "scope": "apteka108", "name": "pg2"}}
-pg1-1  | 2026-10-20 10:26:30.922 UTC [5092] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg3" (198.18.211.81), port 5432 failed: server closed the connection unexpectedly
-pg1-1  | 		This probably means the server terminated abnormally
-pg1-1  | 		before or while processing the request.
-pg1-1  | 2026-10-20 10:26:30.923 UTC [41] LOG:  waiting for WAL to become available at 0/18C478E8
-pg1-1  | 2026-10-20 10:26:32,900 WARNING: Request failed to pg3: GET http://pg3:8008/patroni (HTTPConnectionPool(host='pg3', port=8008): Max retries exceeded with url: /patroni (Caused by ReadTimeoutError("HTTPConnectionPool(host='pg3', port=8008): Read timed out. (read timeout=2)")))
-pg1-1  | 2026-10-20 10:26:33,045 INFO: promoted self to leader by acquiring session lock
-pg1-1  | server promoting
-pg1-1  | 2026-10-20 10:26:33.051 UTC [41] LOG:  received promote request
-pg1-1  | 2026-10-20 10:26:33.051 UTC [5101] FATAL:  terminating walreceiver process due to administrator command
-pg1-1  | 2026-10-20 10:26:33.051 UTC [41] LOG:  waiting for WAL to become available at 0/18C478E8
-pg1-1  | 2026-10-20 10:26:33.052 UTC [41] LOG:  redo done at 0/18C478A0 system usage: CPU: user: 5.57 s, system: 1.74 s, elapsed: 3733.66 s
-pg1-1  | 2026-10-20 10:26:33.052 UTC [41] LOG:  last completed transaction was at log time 2026-10-20 10:26:02.216892+00
-pg1-1  | 2026-10-20 10:26:33.063 UTC [41] LOG:  selected new timeline ID: 4
-pg1-1  | 2026-10-20 10:26:33.133 UTC [41] LOG:  archive recovery complete
-pg1-1  | 2026-10-20 10:26:33,051 INFO: Lock owner: pg1; I am pg1
-pg1-1  | 2026-10-20 10:26:33,137 INFO: updated leader lock during promote
-pg1-1  | 2026-10-20 10:26:33.271 UTC [39] LOG:  checkpoint starting: force
-pg1-1  | 2026-10-20 10:26:33.302 UTC [34] LOG:  database system is ready to accept connections
-pg1-1  | 2026-10-20 10:26:34,278 INFO: no action. I am (pg1), the leader with the lock
-pg1-1  | 2026-10-20 10:26:34.303 UTC [39] LOG:  checkpoint complete: wrote 447 buffers (2.7%), wrote 3 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=1.015 s, sync=0.009 s, total=1.032 s; sync files=11, longest=0.003 s, average=0.001 s; distance=4835 kB, estimate=183941 kB; lsn=0/18C47998, redo lsn=0/18C47908
-pg1-1  | 2026-10-20 10:26:34.303 UTC [39] LOG:  checkpoint starting: immediate force wait
-pg1-1  | 2026-10-20 10:26:34.325 UTC [39] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 0 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.001 s, sync=0.001 s, total=0.023 s; sync files=0, longest=0.000 s, average=0.000 s; distance=0 kB, estimate=165547 kB; lsn=0/18C47A68, redo lsn=0/18C47A10
-pg1-1  | 2026-10-20 10:26:34,470 INFO: no action. I am (pg1), the leader with the lock
-pg1-1  | 2026-10-20 10:26:44,491 INFO: no action. I am (pg1), the leader with the lock
-pg1-1  | 2026-10-20 10:26:54,483 INFO: no action. I am (pg1), the leader with the lock
-pg1-1  | 2026-10-20 10:27:04,473 INFO: no action. I am (pg1), the leader with the lock
-pg1-1  | 2026-10-20 10:27:14,488 INFO: no action. I am (pg1), the leader with the lock
-{"at": "2026-10-20T10:26:02.215215+00:00", "monotonic": 1352617.479183041, "duration_ms": 5.911041051149368, "ok": true, "key": "Э2. Аварийная потеря лидера-8227d9a0176a4662ace7af88fb531383", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:26:02.218033+00:00", "monotonic": 1352617.482009416, "duration_ms": 6.52933306992054, "ok": true, "key": "Э2. Аварийная потеря лидера-646521259d734f8dbafd74c35efd32b2", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:26:02.218648+00:00", "monotonic": 1352617.482625208, "duration_ms": 6.973375100642443, "ok": true, "key": "Э2. Аварийная потеря лидера-d9460efd737a4ccb9de3d464a2ad4518", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:26:02.219147+00:00", "monotonic": 1352617.483124791, "duration_ms": 7.531290873885155, "ok": true, "key": "Э2. Аварийная потеря лидера-0b0f762c8c8c4da3a452682e32670cc9", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:26:02.285406+00:00", "monotonic": 1352617.549380125, "duration_ms": 45.79150001518428, "ok": false, "key": "Э2. Аварийная потеря лидера-8f2e60d096eb4c798dda4444c68cd1f6", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:26:02.286457+00:00", "monotonic": 1352617.550433166, "duration_ms": 47.940583201125264, "ok": false, "key": "Э2. Аварийная потеря лидера-e03e77863030450f8463464a2a9cf909", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:26:02.288991+00:00", "monotonic": 1352617.552965833, "duration_ms": 50.791250076144934, "ok": false, "key": "Э2. Аварийная потеря лидера-493a8ab56ab8468c91b75923e789d414", "node": "172.18.0.7", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:26:02.289363+00:00", "monotonic": 1352617.553339291, "duration_ms": 45.75345781631768, "ok": false, "key": "Э2. Аварийная потеря лидера-4f4ddee433f447d6bc03fec20527634f", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:26:37.173038+00:00", "monotonic": 1352652.436579291, "duration_ms": 32.86512498743832, "ok": true, "key": "Э2. Аварийная потеря лидера-017ff4fae3f945f193e87a50524d90d1", "node": "172.18.0.6", "error": ""}
-{"at": "2026-10-20T10:26:37.184976+00:00", "monotonic": 1352652.448523666, "duration_ms": 44.52875000424683, "ok": true, "key": "Э2. Аварийная потеря лидера-634a4c598f6c4f07a8d95e276b96b609", "node": "172.18.0.6", "error": ""}
-{"at": "2026-10-20T10:26:37.185719+00:00", "monotonic": 1352652.449269458, "duration_ms": 45.107541838660836, "ok": true, "key": "Э2. Аварийная потеря лидера-2dc4243dd3c54e43b43630b4fc4bb5c4", "node": "172.18.0.6", "error": ""}
-{"at": "2026-10-20T10:26:37.187851+00:00", "monotonic": 1352652.451403416, "duration_ms": 46.76737496629357, "ok": true, "key": "Э2. Аварийная потеря лидера-9b32dc535211454ba0bfaed87f9f9668", "node": "172.18.0.6", "error": ""}
+$ docker compose ps -q pg2
+fb3cfdcb0c4489161f1d8bf4ec7b3fac691d20ec5266546d28ebf6d796d24719
+…
+$ docker kill --signal=KILL fb3cfdcb0c4489161f1d8bf4ec7b3fac691d20ec5266546d28ebf6d796d24719
+…
+pg3-1  | 2026-10-20 12:30:27.587 UTC [394] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg2" (172.18.0.6), port 5432 failed: Connection refused
+…
+pg3-1  | 2026-10-20 12:30:32.602 UTC [402] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg2" to address: Temporary failure in name resolution
+…
+pg3-1  | 2026-10-20 12:30:37.590 UTC [409] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg2" to address: Temporary failure in name resolution
+…
+pg3-1  | 2026-10-20 12:30:42.595 UTC [416] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg2" to address: Temporary failure in name resolution
+…
+pg3-1  | 2026-10-20 12:30:47.599 UTC [424] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg2" to address: Temporary failure in name resolution
+…
+pg3-1  | 2026-10-20 12:30:52.600 UTC [432] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg2" to address: Temporary failure in name resolution
+…
+pg3-1  | 2026-10-20 12:30:57,564 INFO: promoted self to leader by acquiring session lock
+…
+{"at": "2026-10-20T12:31:01.375815+00:00", "monotonic": 527.773642905, "duration_ms": 3.4012039999424815, "ok": true, "key": "Э2. Аварийная потеря лидера-7bb4d686d0df4c3a88c12fb95402b73c", "node": "172.18.0.5", "error": ""}
+{"at": "2026-10-20T12:31:01.376686+00:00", "monotonic": 527.774513358, "duration_ms": 4.081508000012946, "ok": true, "key": "Э2. Аварийная потеря лидера-9312cab81b3d4734a448a575ec92139b", "node": "172.18.0.5", "error": ""}
 ```
+
+</details>
+
 
 ## Э3. Возврат узла
 
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
+
 | Метрика | Значение |
 |---|---|
-| seconds_until_caught_up | 8.651 |
+| seconds_until_caught_up | 8.913 |
 | role | replica |
-| wal_since_receiver_start_bytes | 234456 |
-| pg_rewind_call_in_log | False |
+| wal_since_receiver_start_bytes | 115280 |
+| pg_rewind_call_in_log | True |
 
-Узел вернулся репликой. Объём WAL посчитан от start LSN текущего WAL receiver; метод восстановления виден в сыром логе.
+Старый лидер вернулся как реплика. В логах есть успешный pg_rewind; пересоздавать кластер вручную не потребовалось.
 
-```text
-$ docker compose start pg3
-Container apteka108-hw1-etcd1-1 Waiting 
- Container apteka108-hw1-etcd2-1 Waiting 
- Container apteka108-hw1-etcd3-1 Waiting 
- Container apteka108-hw1-etcd1-1 Healthy 
- Container apteka108-hw1-etcd3-1 Healthy 
- Container apteka108-hw1-etcd2-1 Healthy 
- Container apteka108-hw1-pg3-1 Starting 
- Container apteka108-hw1-pg3-1 Started
-$ docker compose logs --no-color --since 2026-10-20T10:27:22.451687+00:00 --tail 80 pg3
-pg3-1  | 
-pg3-1  | 2026-10-20 10:27:28,935 WARNING: Postgresql is not running.
-pg3-1  | 2026-10-20 10:27:28,935 INFO: Lock owner: pg1; I am pg3
-pg3-1  | 2026-10-20 10:27:28,938 INFO: pg_controldata:
-pg3-1  |   pg_control version number: 1800
-pg3-1  |   Catalog version number: 202506291
-pg3-1  |   Database system identifier: 7698678148821708832
-pg3-1  |   Database cluster state: in archive recovery
-pg3-1  |   pg_control last modified: Tue Oct 20 10:27:28 2026
-pg3-1  |   Latest checkpoint location: 0/18C47A68
-pg3-1  |   Latest checkpoint's REDO location: 0/18C47A10
-pg3-1  |   Latest checkpoint's REDO WAL file: 000000040000000000000018
-pg3-1  |   Latest checkpoint's TimeLineID: 4
-pg3-1  |   Latest checkpoint's PrevTimeLineID: 4
-pg3-1  |   Latest checkpoint's full_page_writes: on
-pg3-1  |   Latest checkpoint's NextXID: 0:26931
-pg3-1  |   Latest checkpoint's NextOID: 34736
-pg3-1  |   Latest checkpoint's NextMultiXactId: 1
-pg3-1  |   Latest checkpoint's NextMultiOffset: 0
-pg3-1  |   Latest checkpoint's oldestXID: 745
-pg3-1  |   Latest checkpoint's oldestXID's DB: 1
-pg3-1  |   Latest checkpoint's oldestActiveXID: 26931
-pg3-1  |   Latest checkpoint's oldestMultiXid: 1
-pg3-1  |   Latest checkpoint's oldestMulti's DB: 1
-pg3-1  |   Latest checkpoint's oldestCommitTsXid: 0
-pg3-1  |   Latest checkpoint's newestCommitTsXid: 0
-pg3-1  |   Time of latest checkpoint: Tue Oct 20 10:26:34 2026
-pg3-1  |   Fake LSN counter for unlogged rels: 0/3E8
-pg3-1  |   Minimum recovery ending location: 0/190393D8
-pg3-1  |   Min recovery ending loc's timeline: 4
-pg3-1  |   Backup start location: 0/0
-pg3-1  |   Backup end location: 0/0
-pg3-1  |   End-of-backup record required: no
-pg3-1  |   wal_level setting: logical
-pg3-1  |   wal_log_hints setting: on
-pg3-1  |   max_connections setting: 80
-pg3-1  |   max_worker_processes setting: 8
-pg3-1  |   max_wal_senders setting: 10
-pg3-1  |   max_prepared_xacts setting: 0
-pg3-1  |   max_locks_per_xact setting: 64
-pg3-1  |   track_commit_timestamp setting: off
-pg3-1  |   Maximum data alignment: 8
-pg3-1  |   Database block size: 8192
-pg3-1  |   Blocks per segment of large relation: 131072
-pg3-1  |   WAL block size: 8192
-pg3-1  |   Bytes per WAL segment: 16777216
-pg3-1  |   Maximum length of identifiers: 64
-pg3-1  |   Maximum columns in an index: 32
-pg3-1  |   Maximum size of a TOAST chunk: 1996
-pg3-1  |   Size of a large-object chunk: 2048
-pg3-1  |   Date/time type storage: 64-bit integers
-pg3-1  |   Float8 argument passing: by value
-pg3-1  |   Data page checksum version: 1
-pg3-1  |   Default char data signedness: signed
-pg3-1  |   Mock authentication nonce: a7ec5345fa1540c8a8053893051fd41757dbcbed827a8af8559885d44bc11abc
-pg3-1  | 
-pg3-1  | 2026-10-20 10:27:28,939 INFO: Lock owner: pg1; I am pg3
-pg3-1  | 2026-10-20 10:27:28,990 INFO: starting as a secondary
-pg3-1  | 2026-10-20 10:27:29,291 INFO: establishing a new patroni heartbeat connection to postgres
-pg3-1  | 2026-10-20 10:27:29,294 INFO: establishing a new patroni heartbeat connection to postgres
-pg3-1  | 2026-10-20 10:27:29,306 INFO: postmaster pid=55
-pg3-1  | localhost:5432 - no response
-pg3-1  | 2026-10-20 10:27:29.319 UTC [55] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
-pg3-1  | 2026-10-20 10:27:29.319 UTC [55] LOG:  listening on IPv4 address "0.0.0.0", port 5432
-pg3-1  | 2026-10-20 10:27:29.321 UTC [55] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
-pg3-1  | 2026-10-20 10:27:29.326 UTC [62] LOG:  database system was interrupted while in recovery at log time 2026-10-20 10:26:34 UTC
-pg3-1  | 2026-10-20 10:27:29.326 UTC [62] HINT:  If this has occurred more than once some data might be corrupted and you might need to choose an earlier recovery target.
-pg3-1  | 2026-10-20 10:27:29.479 UTC [62] LOG:  starting backup recovery with redo LSN 0/1878EC80, checkpoint LSN 0/1894ED98, on timeline ID 3
-pg3-1  | 2026-10-20 10:27:29.479 UTC [62] LOG:  entering standby mode
-pg3-1  | 2026-10-20 10:27:29.483 UTC [62] LOG:  redo starts at 0/1878EC80
-pg3-1  | 2026-10-20 10:27:29.549 UTC [62] LOG:  completed backup recovery with redo LSN 0/1878EC80 and end LSN 0/190393D8
-pg3-1  | 2026-10-20 10:27:29.549 UTC [62] LOG:  consistent recovery state reached at 0/190393D8
-pg3-1  | 2026-10-20 10:27:29.549 UTC [62] LOG:  invalid record length at 0/190393D8: expected at least 24, got 0
-pg3-1  | 2026-10-20 10:27:29.549 UTC [55] LOG:  database system is ready to accept read-only connections
-pg3-1  | 2026-10-20 10:27:29,567 INFO: establishing a new patroni heartbeat connection to postgres
-pg3-1  | 2026-10-20 10:27:29.572 UTC [63] LOG:  started streaming WAL from primary at 0/19000000 on timeline 4
-pg3-1  | 2026-10-20 10:27:29,583 INFO: establishing a new patroni restapi connection to postgres
-pg3-1  | localhost:5432 - accepting connections
-pg3-1  | localhost:5432 - accepting connections
-pg3-1  | 2026-10-20 10:27:30,487 INFO: no action. I am (pg3), a secondary, and following a leader (pg1)
-```
-
-## Э4. Плановое переключение
-
-| Метрика | Значение |
-|---|---|
-| acknowledged | 12438 |
-| errors | 186 |
-| seconds | 90.031 |
-| tps | 138.153 |
-| median_ms | 3.635 |
-| p95_ms | 8.504 |
-| last_old_ack | 2026-10-20T10:27:41.645139+00:00 |
-| first_new_ack | 2026-10-20T10:27:45.704888+00:00 |
-| rto_seconds | 4.06 |
-| errors_in_gap | 186 |
-
-Измерен перерыв между подтверждениями при плановой смене лидера.
-
-```text
-$ docker compose ps -q pg1
-7bc61818518d79d20ec1177894a11202594677323bb333e4a67cf32706bda3f7
-$ docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 7bc61818518d79d20ec1177894a11202594677323bb333e4a67cf32706bda3f7
-172.18.0.6
-$ docker compose ps -q pg2
-5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-$ docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-172.18.0.5
-POST /switchover {"leader": "pg1", "candidate": "pg2"}
-{"response": "Successfully switched over to \"pg2\""}
-{"at": "2026-10-20T10:27:41.644235+00:00", "monotonic": 1352716.907004041, "duration_ms": 7.0522078312933445, "ok": true, "key": "E4-56a8381c6ca44b7487fb3e73d9e0f909", "node": "172.18.0.6", "error": ""}
-{"at": "2026-10-20T10:27:41.645099+00:00", "monotonic": 1352716.907869708, "duration_ms": 5.139041924849153, "ok": true, "key": "E4-4356482d85c94c9f90e1fbc29d0047ca", "node": "172.18.0.6", "error": ""}
-{"at": "2026-10-20T10:27:41.645129+00:00", "monotonic": 1352716.907900916, "duration_ms": 8.027832955121994, "ok": true, "key": "E4-90acfcfb74064b449866d953847c7157", "node": "172.18.0.6", "error": ""}
-{"at": "2026-10-20T10:27:41.645139+00:00", "monotonic": 1352716.907910541, "duration_ms": 5.250249989330769, "ok": true, "key": "E4-c8e672cd31cb47a593b0e45af50f5db6", "node": "172.18.0.6", "error": ""}
-{"at": "2026-10-20T10:27:41.671321+00:00", "monotonic": 1352716.934089958, "duration_ms": 1.111124875023961, "ok": false, "key": "E4-bec5ec60d498498faa9cf98df6f28d11", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:27:41.671629+00:00", "monotonic": 1352716.934400041, "duration_ms": 1.6114579048007727, "ok": false, "key": "E4-bf3677370dd546bfa0b2b5db167e2f55", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:27:41.671650+00:00", "monotonic": 1352716.934422625, "duration_ms": 1.5356249641627073, "ok": false, "key": "E4-4d274cbc2a734c2eb3496e8a45ce6b18", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:27:41.733168+00:00", "monotonic": 1352716.99593625, "duration_ms": 7.023292127996683, "ok": false, "key": "E4-6618a37c6e874fc4ae688ce139b86a4a", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:27:45.704888+00:00", "monotonic": 1352720.967604875, "duration_ms": 4039.6769591607153, "ok": true, "key": "E4-14dbe66f9209456fa0b6769de877e2bc", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:27:45.705202+00:00", "monotonic": 1352720.967923208, "duration_ms": 31.030124984681606, "ok": true, "key": "E4-e5fdfbda89bd49689478f1040812a5c4", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:27:45.708207+00:00", "monotonic": 1352720.970927291, "duration_ms": 38.5023329872638, "ok": true, "key": "E4-126192625e58472eb585fe104e47236f", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:27:45.715361+00:00", "monotonic": 1352720.97808075, "duration_ms": 41.065959027037024, "ok": true, "key": "E4-3c222cc06be14006af6542b988744e0a", "node": "172.18.0.5", "error": ""}
-```
-
-## Э5. Sync baseline
-
-| Метрика | Значение |
-|---|---|
-| acknowledged | 8446 |
-| errors | 0 |
-| seconds | 60.029 |
-| tps | 140.7 |
-| median_ms | 4.256 |
-| p95_ms | 9.712 |
-
-Измерены подтверждённые записи и задержки в указанном режиме.
-
-```text
-PATCH /config {"synchronous_mode": true, "synchronous_mode_strict": true, "synchronous_node_count": 1}
-{"at": "2026-10-20T10:29:03.069063+00:00", "monotonic": 1352798.330821125, "duration_ms": 43.458209140226245, "ok": true, "key": "Э5. Sync baseline-884ee6989e1f4134af8fe7e73ed5f47f", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:29:03.069145+00:00", "monotonic": 1352798.330928416, "duration_ms": 43.27749996446073, "ok": true, "key": "Э5. Sync baseline-0f0736e5f8fc4839bf937eb626625103", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:29:03.069170+00:00", "monotonic": 1352798.330954083, "duration_ms": 44.025874929502606, "ok": true, "key": "Э5. Sync baseline-bcd3729456834f2c8e0a876b1fdbff8f", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:29:03.069190+00:00", "monotonic": 1352798.330974541, "duration_ms": 44.40937493927777, "ok": true, "key": "Э5. Sync baseline-8cf3e60877ac4c359245c23f5aecb7e5", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:29:03.098753+00:00", "monotonic": 1352798.36052825, "duration_ms": 8.973750052973628, "ok": true, "key": "Э5. Sync baseline-8142cb3405c74fcfb9d768e313a0aa30", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:29:03.098815+00:00", "monotonic": 1352798.360598875, "duration_ms": 8.227499900385737, "ok": true, "key": "Э5. Sync baseline-ad0a9bb66318445db33318ddab7ee5c1", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:02.996396+00:00", "monotonic": 1352858.257453958, "duration_ms": 5.39595796726644, "ok": true, "key": "Э5. Sync baseline-44b308dfd8474bdfb9208822b445e35a", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:02.996414+00:00", "monotonic": 1352858.257471791, "duration_ms": 5.704582901671529, "ok": true, "key": "Э5. Sync baseline-0f90aef4eb2248a2a819198d458c3e39", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:03.023704+00:00", "monotonic": 1352858.284756583, "duration_ms": 6.756999995559454, "ok": true, "key": "Э5. Sync baseline-a1054f8235414e05be4361baccec4d3e", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:03.026038+00:00", "monotonic": 1352858.287094791, "duration_ms": 5.0836659502238035, "ok": true, "key": "Э5. Sync baseline-6b2f23e9468c4e70b612950d0ffe4572", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:03.026371+00:00", "monotonic": 1352858.287427708, "duration_ms": 5.583083024248481, "ok": true, "key": "Э5. Sync baseline-0b841ce42500462eb6dd7d35a66a0ac1", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:03.026394+00:00", "monotonic": 1352858.287451916, "duration_ms": 5.480332998558879, "ok": true, "key": "Э5. Sync baseline-79a59ede0dd24e43b3ca93bcf3fc0e66", "node": "172.18.0.5", "error": ""}
-```
-
-## Э5. Sync failover
-
-| Метрика | Значение |
-|---|---|
-| acknowledged | 7626 |
-| errors | 172 |
-| seconds | 90.016 |
-| tps | 84.718 |
-| median_ms | 4.716 |
-| p95_ms | 13.761 |
-| last_old_ack | 2026-10-20T10:30:13.855938+00:00 |
-| first_new_ack | 2026-10-20T10:30:46.810989+00:00 |
-| rto_seconds | 32.955 |
-| errors_in_gap | 172 |
-| old_leader | pg2 |
-| new_leader | pg3 |
-| lost_acknowledged | 0 |
-
-Новым лидером стал pg3. Потери подтверждённых транзакций сверены по probe_bk.
-
-```text
-$ docker compose ps -q pg2
-5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-$ docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' 5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-172.18.0.5
-$ docker compose ps -q pg2
-5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-$ docker inspect --format '{{json .HostConfig.RestartPolicy}}' 5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-{"Name":"unless-stopped","MaximumRetryCount":0}
-$ docker update --restart=no 5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-$ docker kill --signal=KILL 5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-5ceca3bdb61c43d154ce4ae6c9c8c5c9e8ba844926d749375de320cd9a5b0441
-$ docker compose ps -q pg3
-ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-$ docker inspect --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' ce5d3ed2a79bb69e601ca6e1f2d9b6f8555dc0efe57a1350b9e79be65d693033
-172.18.0.7
-Leader addresses: pg2=172.18.0.5, pg3=172.18.0.7
-$ docker compose logs --no-color --tail 50 pg3
-pg3-1  | 		This probably means the server terminated abnormally
-pg3-1  | 		before or while processing the request.
-pg3-1  | 2026-10-20 10:30:27.709 UTC [62] LOG:  waiting for WAL to become available at 0/19DFD350
-pg3-1  | 2026-10-20 10:30:32,560 INFO: no action. I am (pg3), a secondary, and following a leader (pg2)
-pg3-1  | 2026-10-20 10:30:32.601 UTC [342] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg2" (198.18.185.252), port 5432 failed: server closed the connection unexpectedly
-pg3-1  | 		This probably means the server terminated abnormally
-pg3-1  | 		before or while processing the request.
-pg3-1  | 2026-10-20 10:30:32.605 UTC [62] LOG:  waiting for WAL to become available at 0/19DFD350
-pg3-1  | 2026-10-20 10:30:37.583 UTC [350] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg2" (198.18.185.252), port 5432 failed: server closed the connection unexpectedly
-pg3-1  | 		This probably means the server terminated abnormally
-pg3-1  | 		before or while processing the request.
-pg3-1  | 2026-10-20 10:30:37.587 UTC [62] LOG:  waiting for WAL to become available at 0/19DFD350
-pg3-1  | 2026-10-20 10:30:42.529 UTC [358] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg2" (198.18.185.252), port 5432 failed: server closed the connection unexpectedly
-pg3-1  | 		This probably means the server terminated abnormally
-pg3-1  | 		before or while processing the request.
-pg3-1  | 2026-10-20 10:30:42.531 UTC [62] LOG:  waiting for WAL to become available at 0/19DFD350
-pg3-1  | 2026-10-20 10:30:44,112 WARNING: Request failed to pg2: GET http://pg2:8008/patroni (HTTPConnectionPool(host='pg2', port=8008): Max retries exceeded with url: /patroni (Caused by ConnectTimeoutError(<HTTPConnection(host='pg2', port=8008) at 0xffff9c977bb0>, 'Connection to pg2 timed out. (connect timeout=2)')))
-pg3-1  | 2026-10-20 10:30:44.256 UTC [55] LOG:  received SIGHUP, reloading configuration files
-pg3-1  | server signaled
-pg3-1  | 2026-10-20 10:30:44.257 UTC [55] LOG:  parameter "synchronous_standby_names" changed to "*"
-pg3-1  | 2026-10-20 10:30:44,302 INFO: promoted self to leader by acquiring session lock
-pg3-1  | server promoting
-pg3-1  | 2026-10-20 10:30:44.305 UTC [62] LOG:  received promote request
-pg3-1  | 2026-10-20 10:30:44.305 UTC [368] FATAL:  terminating walreceiver process due to administrator command
-pg3-1  | 2026-10-20 10:30:44.305 UTC [62] LOG:  waiting for WAL to become available at 0/19DFD350
-pg3-1  | 2026-10-20 10:30:44.305 UTC [62] LOG:  redo done at 0/19DFD308 system usage: CPU: user: 0.50 s, system: 0.57 s, elapsed: 194.82 s
-pg3-1  | 2026-10-20 10:30:44.305 UTC [62] LOG:  last completed transaction was at log time 2026-10-20 10:30:13.854037+00
-pg3-1  | 2026-10-20 10:30:44.311 UTC [62] LOG:  selected new timeline ID: 6
-pg3-1  | 2026-10-20 10:30:44,304 INFO: Lock owner: pg3; I am pg3
-pg3-1  | 2026-10-20 10:30:44,399 INFO: updated leader lock during promote
-pg3-1  | 2026-10-20 10:30:44.402 UTC [62] LOG:  archive recovery complete
-pg3-1  | 2026-10-20 10:30:44.518 UTC [60] LOG:  checkpoint starting: force
-pg3-1  | 2026-10-20 10:30:44.523 UTC [55] LOG:  database system is ready to accept connections
-pg3-1  | 2026-10-20 10:30:44.612 UTC [369] LOG:  standby "pg1" is now a synchronous standby with priority 1
-pg3-1  | 2026-10-20 10:30:44.612 UTC [369] STATEMENT:  START_REPLICATION SLOT "pg1" 0/19000000 TIMELINE 6
-pg3-1  | 2026-10-20 10:30:45,321 INFO: Lock owner: pg3; I am pg3
-pg3-1  | 2026-10-20 10:30:45,444 INFO: Assigning synchronous standby status to ['pg1']
-pg3-1  | 2026-10-20 10:30:45.451 UTC [55] LOG:  received SIGHUP, reloading configuration files
-pg3-1  | server signaled
-pg3-1  | 2026-10-20 10:30:45.454 UTC [55] LOG:  parameter "synchronous_standby_names" changed to "pg1"
-pg3-1  | 2026-10-20 10:30:45.582 UTC [60] LOG:  checkpoint complete: wrote 1602 buffers (9.8%), wrote 22 SLRU buffers; 0 WAL file(s) added, 0 removed, 1 recycled; write=1.046 s, sync=0.004 s, total=1.064 s; sync files=20, longest=0.002 s, average=0.001 s; distance=22969 kB, estimate=22969 kB; lsn=0/19DFD460, redo lsn=0/19DFD370
-pg3-1  | 2026-10-20 10:30:45.583 UTC [60] LOG:  checkpoint starting: immediate force wait
-pg3-1  | 2026-10-20 10:30:45.588 UTC [60] LOG:  checkpoint complete: wrote 0 buffers (0.0%), wrote 1 SLRU buffers; 0 WAL file(s) added, 0 removed, 0 recycled; write=0.002 s, sync=0.001 s, total=0.006 s; sync files=1, longest=0.001 s, average=0.001 s; distance=0 kB, estimate=20672 kB; lsn=0/19DFD530, redo lsn=0/19DFD4D8
-pg3-1  | 2026-10-20 10:30:47,634 INFO: Synchronous standby status assigned to ['pg1']
-pg3-1  | 2026-10-20 10:30:47,743 INFO: no action. I am (pg3), the leader with the lock
-pg3-1  | 2026-10-20 10:30:47,883 INFO: no action. I am (pg3), the leader with the lock
-pg3-1  | 2026-10-20 10:30:57,943 INFO: no action. I am (pg3), the leader with the lock
-pg3-1  | 2026-10-20 10:31:07,915 INFO: no action. I am (pg3), the leader with the lock
-pg3-1  | 2026-10-20 10:31:17,912 INFO: no action. I am (pg3), the leader with the lock
-pg3-1  | 2026-10-20 10:31:27,895 INFO: no action. I am (pg3), the leader with the lock
-{"at": "2026-10-20T10:30:13.848261+00:00", "monotonic": 1352869.109184958, "duration_ms": 5.699000088497996, "ok": true, "key": "Э5. Sync failover-a6b93067495c4678a7abdc6dfd72df41", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:13.850016+00:00", "monotonic": 1352869.110941958, "duration_ms": 5.71683282032609, "ok": true, "key": "Э5. Sync failover-1459fe8f65d54ef79edc39b938d25087", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:13.855769+00:00", "monotonic": 1352869.116692, "duration_ms": 5.303292069584131, "ok": true, "key": "Э5. Sync failover-7f8e6774901044a59a09ca835391ff91", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:13.855938+00:00", "monotonic": 1352869.116863583, "duration_ms": 5.3353330586105585, "ok": true, "key": "Э5. Sync failover-d8a0c1c545ed4d07833101e978fb26e6", "node": "172.18.0.5", "error": ""}
-{"at": "2026-10-20T10:30:44.004660+00:00", "monotonic": 1352899.264837833, "duration_ms": 30126.92195782438, "ok": false, "key": "Э5. Sync failover-9ffbeef3bdac4ebe8abe121db55babd6", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:30:44.006119+00:00", "monotonic": 1352899.266677916, "duration_ms": 30135.229374980554, "ok": false, "key": "Э5. Sync failover-1e97a5b473bf4f75934e64e7752ac136", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:30:44.006152+00:00", "monotonic": 1352899.26671225, "duration_ms": 30136.86070893891, "ok": false, "key": "Э5. Sync failover-c5b7d7ed823546e08d081b2f94b8ecd8", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:30:44.006200+00:00", "monotonic": 1352899.266760833, "duration_ms": 30128.892875043675, "ok": false, "key": "Э5. Sync failover-ce2b6f8336c044d5a2fa5507b14861c3", "node": "", "error": "server closed the connection unexpectedly"}
-{"at": "2026-10-20T10:30:46.810989+00:00", "monotonic": 1352902.071511833, "duration_ms": 24.12695810198784, "ok": true, "key": "Э5. Sync failover-7e11752e1e2b46e8a33a131f6b98c419", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:30:46.823445+00:00", "monotonic": 1352902.083967291, "duration_ms": 36.258958047255874, "ok": true, "key": "Э5. Sync failover-6ff31b603f694129b9bfc54a6dac7e3c", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:30:46.823747+00:00", "monotonic": 1352902.084272291, "duration_ms": 36.75983310677111, "ok": true, "key": "Э5. Sync failover-76e776edff304f23867c5e758f957bf1", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:30:46.828547+00:00", "monotonic": 1352902.089071333, "duration_ms": 39.45379192009568, "ok": true, "key": "Э5. Sync failover-dec99875630b4c009600b26c5766da42", "node": "172.18.0.7", "error": ""}
-```
-
-## Э5. Возврат sync-узла
-
-| Метрика | Значение |
-|---|---|
-| seconds_until_caught_up | 8.901 |
-| role | replica |
-| wal_since_receiver_start_bytes | 1273560 |
-| pg_rewind_call_in_log | False |
-
-Узел вернулся репликой. Объём WAL посчитан от start LSN текущего WAL receiver; метод восстановления виден в сыром логе.
+<details>
+<summary>Фрагмент исходного вывода</summary>
 
 ```text
 $ docker compose start pg2
-Container apteka108-hw1-etcd3-1 Waiting 
- Container apteka108-hw1-etcd1-1 Waiting 
- Container apteka108-hw1-etcd2-1 Waiting 
- Container apteka108-hw1-etcd1-1 Healthy 
- Container apteka108-hw1-etcd3-1 Healthy 
- Container apteka108-hw1-etcd2-1 Healthy 
- Container apteka108-hw1-pg2-1 Starting 
- Container apteka108-hw1-pg2-1 Started
-$ docker compose logs --no-color --since 2026-10-20T10:31:34.149636+00:00 --tail 80 pg2
-pg2-1  | 
-pg2-1  | 2026-10-20 10:31:40,470 WARNING: Postgresql is not running.
-pg2-1  | 2026-10-20 10:31:40,470 INFO: Lock owner: pg3; I am pg2
-pg2-1  | 2026-10-20 10:31:40,473 INFO: pg_controldata:
-pg2-1  |   pg_control version number: 1800
-pg2-1  |   Catalog version number: 202506291
-pg2-1  |   Database system identifier: 7698678148821708832
-pg2-1  |   Database cluster state: in archive recovery
-pg2-1  |   pg_control last modified: Tue Oct 20 10:31:39 2026
-pg2-1  |   Latest checkpoint location: 0/19DFD530
-pg2-1  |   Latest checkpoint's REDO location: 0/19DFD4D8
-pg2-1  |   Latest checkpoint's REDO WAL file: 000000060000000000000019
-pg2-1  |   Latest checkpoint's TimeLineID: 6
-pg2-1  |   Latest checkpoint's PrevTimeLineID: 6
-pg2-1  |   Latest checkpoint's full_page_writes: on
-pg2-1  |   Latest checkpoint's NextXID: 0:55547
-pg2-1  |   Latest checkpoint's NextOID: 42928
-pg2-1  |   Latest checkpoint's NextMultiXactId: 1
-pg2-1  |   Latest checkpoint's NextMultiOffset: 0
-pg2-1  |   Latest checkpoint's oldestXID: 745
-pg2-1  |   Latest checkpoint's oldestXID's DB: 1
-pg2-1  |   Latest checkpoint's oldestActiveXID: 55547
-pg2-1  |   Latest checkpoint's oldestMultiXid: 1
-pg2-1  |   Latest checkpoint's oldestMulti's DB: 1
-pg2-1  |   Latest checkpoint's oldestCommitTsXid: 0
-pg2-1  |   Latest checkpoint's newestCommitTsXid: 0
-pg2-1  |   Time of latest checkpoint: Tue Oct 20 10:30:45 2026
-pg2-1  |   Fake LSN counter for unlogged rels: 0/3E8
-pg2-1  |   Minimum recovery ending location: 0/1A136ED8
-pg2-1  |   Min recovery ending loc's timeline: 6
-pg2-1  |   Backup start location: 0/0
-pg2-1  |   Backup end location: 0/0
-pg2-1  |   End-of-backup record required: no
-pg2-1  |   wal_level setting: logical
-pg2-1  |   wal_log_hints setting: on
-pg2-1  |   max_connections setting: 80
-pg2-1  |   max_worker_processes setting: 8
-pg2-1  |   max_wal_senders setting: 10
-pg2-1  |   max_prepared_xacts setting: 0
-pg2-1  |   max_locks_per_xact setting: 64
-pg2-1  |   track_commit_timestamp setting: off
-pg2-1  |   Maximum data alignment: 8
-pg2-1  |   Database block size: 8192
-pg2-1  |   Blocks per segment of large relation: 131072
-pg2-1  |   WAL block size: 8192
-pg2-1  |   Bytes per WAL segment: 16777216
-pg2-1  |   Maximum length of identifiers: 64
-pg2-1  |   Maximum columns in an index: 32
-pg2-1  |   Maximum size of a TOAST chunk: 1996
-pg2-1  |   Size of a large-object chunk: 2048
-pg2-1  |   Date/time type storage: 64-bit integers
-pg2-1  |   Float8 argument passing: by value
-pg2-1  |   Data page checksum version: 1
-pg2-1  |   Default char data signedness: signed
-pg2-1  |   Mock authentication nonce: a7ec5345fa1540c8a8053893051fd41757dbcbed827a8af8559885d44bc11abc
-pg2-1  | 
-pg2-1  | 2026-10-20 10:31:40,473 INFO: Lock owner: pg3; I am pg2
-pg2-1  | 2026-10-20 10:31:40,524 INFO: starting as a secondary
-pg2-1  | 2026-10-20 10:31:40,562 INFO: establishing a new patroni heartbeat connection to postgres
-pg2-1  | 2026-10-20 10:31:40,724 INFO: establishing a new patroni heartbeat connection to postgres
-pg2-1  | 2026-10-20 10:31:40,843 INFO: postmaster pid=55
-pg2-1  | localhost:5432 - no response
-pg2-1  | 2026-10-20 10:31:40.872 UTC [55] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
-pg2-1  | 2026-10-20 10:31:40.872 UTC [55] LOG:  listening on IPv4 address "0.0.0.0", port 5432
-pg2-1  | 2026-10-20 10:31:40.874 UTC [55] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
-pg2-1  | 2026-10-20 10:31:40.878 UTC [62] LOG:  database system was interrupted while in recovery at log time 2026-10-20 10:30:45 UTC
-pg2-1  | 2026-10-20 10:31:40.878 UTC [62] HINT:  If this has occurred more than once some data might be corrupted and you might need to choose an earlier recovery target.
-pg2-1  | 2026-10-20 10:31:41.034 UTC [62] LOG:  starting backup recovery with redo LSN 0/192BFFD0, checkpoint LSN 0/192C0040, on timeline ID 5
-pg2-1  | 2026-10-20 10:31:41.035 UTC [62] LOG:  entering standby mode
-pg2-1  | 2026-10-20 10:31:41.042 UTC [62] LOG:  redo starts at 0/192BFFD0
-pg2-1  | 2026-10-20 10:31:41.122 UTC [62] LOG:  completed backup recovery with redo LSN 0/192BFFD0 and end LSN 0/1A136ED8
-pg2-1  | 2026-10-20 10:31:41.122 UTC [62] LOG:  consistent recovery state reached at 0/1A136ED8
-pg2-1  | 2026-10-20 10:31:41.122 UTC [62] LOG:  invalid record length at 0/1A136ED8: expected at least 24, got 0
-pg2-1  | 2026-10-20 10:31:41.122 UTC [55] LOG:  database system is ready to accept read-only connections
-pg2-1  | 2026-10-20 10:31:41.140 UTC [63] LOG:  started streaming WAL from primary at 0/1A000000 on timeline 6
-pg2-1  | 2026-10-20 10:31:41,444 INFO: establishing a new patroni heartbeat connection to postgres
-pg2-1  | 2026-10-20 10:31:41,474 INFO: establishing a new patroni restapi connection to postgres
+Container apteka108-hw1-etcd1-1  Waiting
+…
+pg2-1  | 2026-10-20 12:31:50,655 INFO: running pg_rewind from pg3
+pg2-1  | 2026-10-20 12:31:50,682 INFO: running pg_rewind from dbname=postgres user=postgres host=pg3 port=5432 target_session_attrs=read-write
+pg2-1  | 2026-10-20 12:31:53,320 INFO: pg_rewind exit code=0
+…
+pg2-1  | 2026-10-20 12:31:55.023 UTC [73] LOG:  started streaming WAL from primary at 0/18000000 on timeline 3
+…
 pg2-1  | localhost:5432 - accepting connections
-pg2-1  | localhost:5432 - accepting connections
-pg2-1  | 2026-10-20 10:31:41,995 INFO: no action. I am (pg2), a secondary, and following a leader (pg3)
+pg2-1  | 2026-10-20 12:31:55,777 INFO: no action. I am (pg2), a secondary, and following a leader (pg3)
 ```
 
-## Э5. Цена синхронной репликации
+</details>
+
+
+## Э4. Плановое переключение
+
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
 
 | Метрика | Значение |
 |---|---|
-| async_tps | 142.101 |
-| sync_tps | 140.7 |
-| async_p95_ms | 10.085 |
-| sync_p95_ms | 9.712 |
-| async_rto | 34.953 |
-| sync_rto | 32.955 |
+| Подтверждено транзакций | 15568 |
+| Ошибок | 0 |
+| Длительность, с | 90.007 |
+| Транзакций в секунду | 172.965 |
+| Медианная задержка, мс | 1.739 |
+| p95 задержки, мс | 2.517 |
+| Последний ACK старого лидера (UTC) | 2026-10-20T12:32:07.206369+00:00 |
+| Первый ACK нового лидера (UTC) | 2026-10-20T12:32:11.645924+00:00 |
+| Пауза записи (RTO), с | 4.44 |
+| Ошибок за паузу | 0 |
+
+Плановая передача роли заняла 4,440 с по подтверждениям клиента. Она заметно короче аварийного переключения, поскольку не требует ждать истечения лидерской аренды.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
+
+```text
+$ docker compose ps -q pg3
+b01e5ecb71c37645ce307db951803481073bcaec23f5e6f19cd9e2b312e3e330
+…
+POST /switchover {"leader": "pg3", "candidate": "pg1"}
+…
+{"at": "2026-10-20T12:32:11.653851+00:00", "monotonic": 598.051678433, "duration_ms": 4427.790079000033, "ok": true, "key": "E4-c4c45278751d4a83b484bdcc013a9bee", "node": "172.18.0.7", "error": ""}
+{"at": "2026-10-20T12:32:11.654749+00:00", "monotonic": 598.052576399, "duration_ms": 4428.205778000006, "ok": true, "key": "E4-37c378eddaf64fffa8a567d39f069f67", "node": "172.18.0.7", "error": ""}
+```
+
+</details>
+
+
+## Э5. Sync baseline
+
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
+
+| Метрика | Значение |
+|---|---|
+| Подтверждено транзакций | 10789 |
+| Ошибок | 0 |
+| Длительность, с | 60.022 |
+| Транзакций в секунду | 179.751 |
+| Медианная задержка, мс | 2.045 |
+| p95 задержки, мс | 2.634 |
+
+В обоих опытах подтверждённые транзакции сохранились. Это наблюдение одного запуска: асинхронная репликация всё равно допускает потерю последнего WAL. Задержки async и sync измерены последовательно на разных лидерах, поэтому по ним нельзя заключить, что sync быстрее.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
+
+```text
+PATCH /config {"synchronous_mode": true, "synchronous_mode_strict": true, "synchronous_node_count": 1}
+{"at": "2026-10-20T12:33:28.535338+00:00", "monotonic": 674.933164102, "duration_ms": 5.95250699996086, "ok": true, "key": "Э5. Sync baseline-e361ba667a964e1eaa4d88974c50e3f6", "node": "172.18.0.7", "error": ""}
+…
+{"at": "2026-10-20T12:34:28.530573+00:00", "monotonic": 734.928400064, "duration_ms": 2.1815850000166392, "ok": true, "key": "Э5. Sync baseline-b960d526b9b94b95804aeba654b5c8e1", "node": "172.18.0.7", "error": ""}
+{"at": "2026-10-20T12:34:28.530692+00:00", "monotonic": 734.928519945, "duration_ms": 2.4901679998947657, "ok": true, "key": "Э5. Sync baseline-4a9f0e73b622466390a18f900d2f7f39", "node": "172.18.0.7", "error": ""}
+```
+
+</details>
+
+
+## Э5. Sync failover
+
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
+
+| Метрика | Значение |
+|---|---|
+| Подтверждено транзакций | 10052 |
+| Ошибок | 304 |
+| Длительность, с | 90.02 |
+| Транзакций в секунду | 111.664 |
+| Медианная задержка, мс | 2.05 |
+| p95 задержки, мс | 2.608 |
+| Последний ACK старого лидера (UTC) | 2026-10-20T12:34:38.938411+00:00 |
+| Первый ACK нового лидера (UTC) | 2026-10-20T12:35:13.033771+00:00 |
+| Пауза записи (RTO), с | 34.095 |
+| Ошибок за паузу | 304 |
+| Старый лидер | pg1 |
+| Новый лидер | pg2 |
+| Потеряно подтверждённых транзакций | 0 |
+
+В обоих опытах подтверждённые транзакции сохранились. Это наблюдение одного запуска: асинхронная репликация всё равно допускает потерю последнего WAL. Задержки async и sync измерены последовательно на разных лидерах, поэтому по ним нельзя заключить, что sync быстрее.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
+
+```text
+$ docker compose ps -q pg1
+a66e888fc0ef2f715d3f497de0488ca97fb9bab7a42da589b2156fac14d4d515
+…
+$ docker kill --signal=KILL a66e888fc0ef2f715d3f497de0488ca97fb9bab7a42da589b2156fac14d4d515
+…
+pg2-1  | 2026-10-20 12:34:38.948 UTC [326] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg1" (172.18.0.7), port 5432 failed: Connection refused
+…
+pg2-1  | 2026-10-20 12:34:43.947 UTC [334] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg1" to address: Temporary failure in name resolution
+…
+pg2-1  | 2026-10-20 12:34:48.951 UTC [342] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg1" to address: Temporary failure in name resolution
+…
+pg2-1  | 2026-10-20 12:34:53.951 UTC [350] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg1" to address: Temporary failure in name resolution
+…
+pg2-1  | 2026-10-20 12:34:58.955 UTC [358] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg1" to address: Temporary failure in name resolution
+…
+pg2-1  | 2026-10-20 12:35:03.956 UTC [366] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg1" to address: Temporary failure in name resolution
+…
+pg2-1  | 2026-10-20 12:35:08.956 UTC [376] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg1" to address: Temporary failure in name resolution
+…
+pg2-1  | 2026-10-20 12:35:09.832 UTC [49] LOG:  parameter "synchronous_standby_names" changed to "*"
+pg2-1  | 2026-10-20 12:35:09.838 UTC [379] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: could not translate host name "pg1" to address: Temporary failure in name resolution
+…
+{"at": "2026-10-20T12:35:13.050241+00:00", "monotonic": 779.448069101, "duration_ms": 2.9941310000367594, "ok": true, "key": "Э5. Sync failover-3aef71596b6147408c8a37b965db10c9", "node": "172.18.0.6", "error": ""}
+{"at": "2026-10-20T12:35:13.051173+00:00", "monotonic": 779.449000889, "duration_ms": 3.4770139999409366, "ok": true, "key": "Э5. Sync failover-75561ab224394037b2a33d3a2855dfa0", "node": "172.18.0.6", "error": ""}
+```
+
+</details>
+
+
+## Э5. Возврат sync-узла
+
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
+
+| Метрика | Значение |
+|---|---|
+| seconds_until_caught_up | 4.909 |
+| role | replica |
+| wal_since_receiver_start_bytes | 15807752 |
+| pg_rewind_call_in_log | True |
+
+В обоих опытах подтверждённые транзакции сохранились. Это наблюдение одного запуска: асинхронная репликация всё равно допускает потерю последнего WAL. Задержки async и sync измерены последовательно на разных лидерах, поэтому по ним нельзя заключить, что sync быстрее.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
+
+```text
+$ docker compose start pg1
+Container apteka108-hw1-etcd2-1  Waiting
+…
+pg1-1  | 2026-10-20 12:36:00,656 INFO: running pg_rewind from pg2
+pg1-1  | 2026-10-20 12:36:00,684 INFO: running pg_rewind from dbname=postgres user=postgres host=pg2 port=5432 target_session_attrs=read-write
+pg1-1  | 2026-10-20 12:36:02,466 INFO: pg_rewind exit code=0
+…
+pg1-1  | 2026-10-20 12:36:02.889 UTC [59] LOG:  started streaming WAL from primary at 0/18000000 on timeline 5
+…
+pg1-1  | localhost:5432 - accepting connections
+pg1-1  | 2026-10-20 12:36:03,905 INFO: no action. I am (pg1), a secondary, and following a leader (pg2)
+```
+
+</details>
+
+
+## Э5. Цена синхронной репликации
+
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
+
+| Метрика | Значение |
+|---|---|
+| async_tps | 181.929 |
+| sync_tps | 179.751 |
+| async_p95_ms | 2.571 |
+| sync_p95_ms | 2.634 |
+| async_rto | 33.803 |
+| sync_rto | 34.095 |
 | async_lost | 0 |
 | sync_lost | 0 |
 
@@ -543,269 +356,105 @@ pg2-1  | 2026-10-20 10:31:41,995 INFO: no action. I am (pg2), a secondary, and f
 ```text
 ```
 
-## Э6. Кворум etcd
+…
+
+Этап общего сценария:
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
 
 | Метрика | Значение |
 |---|---|
-| one_node_loss_acknowledged | 1479 |
+| one_node_loss_acknowledged | 1822 |
 | one_node_loss_errors | 0 |
-| two_node_loss_write_failure_seconds | 23.716 |
+| two_node_loss_write_failure_seconds | 23.839 |
 | replica_read_available | True |
 
-Один отказ оставил кворум 2/3; при двух отказах запись остановилась, чтение реплики сохранилось.
+С одним недоступным etcd запись продолжалась. После потери второго узла кворум исчез: запись остановилась, но чтение с реплики сохранилось. После возврата etcd кластер восстановился.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
 
 ```text
 $ docker compose stop etcd1
-Container apteka108-hw1-etcd1-1 Stopping 
- Container apteka108-hw1-etcd1-1 Stopped
-$ docker compose exec -T etcd3 etcdctl --endpoints=http://etcd1:2379,http://etcd2:2379,http://etcd3:2379 endpoint health
-{"level":"warn","ts":"2026-10-20T10:31:59.809539Z","logger":"client","caller":"v3@v3.5.21/retry_interceptor.go:63","msg":"retrying of unary invoker failed","target":"etcd-endpoints://0x400036a000/etcd1:2379","attempt":0,"error":"rpc error: code = DeadlineExceeded desc = latest balancer error: last connection error: connection error: desc = \"error reading server preface: EOF\""}
-http://etcd1:2379 is unhealthy: failed to commit proposal: context deadline exceeded
-Error: unhealthy cluster
-http://etcd2:2379 is healthy: successfully committed proposal: took = 3.868583ms
-http://etcd3:2379 is healthy: successfully committed proposal: took = 4.607291ms
+Container apteka108-hw1-etcd1-1  Stopping
+…
 $ docker compose stop etcd2
-Container apteka108-hw1-etcd2-1 Stopping 
- Container apteka108-hw1-etcd2-1 Stopped
-First write failure: cannot execute INSERT in a read-only transaction
-$ docker compose logs --no-color --tail 35 pg1 pg2 pg3
-pg2-1  |     ret = super(PatroniEtcd3Client, self).call_rpc(method, fields, retry)
-pg2-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 376, in call_rpc
-pg2-1  |     return self.api_execute(self.version_prefix + method, self._MPOST, fields)
-pg2-1  |            ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-pg2-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd.py", line 353, in api_execute
-pg2-1  |     raise ex
-pg2-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd.py", line 335, in api_execute
-pg2-1  |     return self._do_http_request(retry, machines_cache, request_executor, method, path, **kwargs)
-pg2-1  |            ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-pg2-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd.py", line 305, in _do_http_request
-pg2-1  |     raise etcd.EtcdConnectionFailed('No more machines in the cluster')
-pg2-1  | etcd.EtcdConnectionFailed: No more machines in the cluster
-pg2-1  | 2026-10-20 10:32:13,556 ERROR: watchprefix failed: ProtocolError('Response ended prematurely')
-pg2-1  | 2026-10-20 10:32:13,567 INFO: no action. I am (pg2), a secondary, and following a leader (pg3)
-pg2-1  | 2026-10-20 10:32:13,571 WARNING: Loop time exceeded, rescheduling immediately.
-pg2-1  | 2026-10-20 10:32:16,693 ERROR: Failed to get list of machines from http://etcd1:2379/v3: ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-pg2-1  | 2026-10-20 10:32:16,744 INFO: Lock owner: pg3; I am pg2
-pg2-1  | 2026-10-20 10:32:20,094 ERROR: Request to server http://etcd3:2379 failed: ReadTimeoutError("HTTPConnectionPool(host='etcd3', port=2379): Read timed out. (read timeout=3.3329500833336474)")
-pg2-1  | 2026-10-20 10:32:20,094 INFO: Reconnection allowed, looking for another server.
-pg2-1  | 2026-10-20 10:32:20,095 INFO: Retrying on http://etcd1:2379
-pg2-1  | 2026-10-20 10:32:22.187 UTC [63] LOG:  replication terminated by primary server
-pg2-1  | 2026-10-20 10:32:22.187 UTC [63] DETAIL:  End of WAL reached on timeline 6 at 0/1A1B7710.
-pg2-1  | 2026-10-20 10:32:22.187 UTC [63] FATAL:  could not send end-of-streaming message to primary: server closed the connection unexpectedly
-pg2-1  | 		This probably means the server terminated abnormally
-pg2-1  | 		before or while processing the request.
-pg2-1  | 	invalid socket
-pg2-1  | 	no COPY in progress
-pg2-1  | 2026-10-20 10:32:22.188 UTC [62] LOG:  invalid record length at 0/1A1B7710: expected at least 24, got 0
-pg2-1  | 2026-10-20 10:32:22.199 UTC [130] FATAL:  streaming replication receiver "apteka108" could not connect to the primary server: connection to server at "pg3" (172.18.0.7), port 5432 failed: server closed the connection unexpectedly
-pg2-1  | 		This probably means the server terminated abnormally
-pg2-1  | 		before or while processing the request.
-pg2-1  | 2026-10-20 10:32:22.199 UTC [62] LOG:  waiting for WAL to become available at 0/1A1B7728
-pg2-1  | 2026-10-20 10:32:23,226 ERROR: Request to server http://etcd1:2379 failed: ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response'))
-pg2-1  | 2026-10-20 10:32:23,226 INFO: Reconnection allowed, looking for another server.
-pg2-1  | 2026-10-20 10:32:23,226 INFO: Retrying on http://etcd2:2379
-pg1-1  |     ~~~~~~~~~~~~~~~~~~^^
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 833, in refresh_lease
-pg1-1  |     return self.retry(self._do_refresh_lease)
-pg1-1  |            ~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd.py", line 553, in retry
-pg1-1  |     return retry(method, *args, **kwargs)
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/utils.py", line 763, in __call__
-pg1-1  |     return func(*args, **kwargs)
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 821, in _do_refresh_lease
-pg1-1  |     if self._lease and not self._client.lease_keepalive(self._lease, retry=retry):
-pg1-1  |                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 218, in wrapper
-pg1-1  |     return self.handle_auth_errors(func, *args, **kwargs)
-pg1-1  |            ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 431, in handle_auth_errors
-pg1-1  |     return func(self, *args, retry=retry, **kwargs)
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 468, in lease_keepalive
-pg1-1  |     return self.call_rpc('/lease/keepalive', {'ID': ID}, retry).get('result', {}).get('TTL')
-pg1-1  |            ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 748, in call_rpc
-pg1-1  |     ret = super(PatroniEtcd3Client, self).call_rpc(method, fields, retry)
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd3.py", line 376, in call_rpc
-pg1-1  |     return self.api_execute(self.version_prefix + method, self._MPOST, fields)
-pg1-1  |            ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd.py", line 353, in api_execute
-pg1-1  |     raise ex
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd.py", line 335, in api_execute
-pg1-1  |     return self._do_http_request(retry, machines_cache, request_executor, method, path, **kwargs)
-pg1-1  |            ~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-pg1-1  |   File "/opt/patroni/lib/python3.13/site-packages/patroni/dcs/etcd.py", line 305, in _do_http_request
-pg1-1  |     raise etcd.EtcdConnectionFailed('No more machines in the cluster')
-pg1-1  | etcd.EtcdConnectionFailed: No more machines in the cluster
-pg1-1  | 2026-10-20 10:32:23,306 ERROR: watchprefix failed: ProtocolError('Response ended prematurely')
-pg1-1  | 2026-10-20 10:32:23,312 INFO: no action. I am (pg1), a secondary, and following a leader (pg3)
-pg1-1  | 2026-10-20 10:32:23,316 WARNING: Loop time exceeded, rescheduling immediately.
-pg3-1  | 2026-10-20 10:32:22,093 INFO: Demoting self (offline)
-pg3-1  | 2026-10-20 10:32:22.126 UTC [55] LOG:  received fast shutdown request
-pg3-1  | 2026-10-20 10:32:22.128 UTC [55] LOG:  aborting any active transactions
-pg3-1  | 2026-10-20 10:32:22.128 UTC [381] FATAL:  terminating connection due to administrator command
-pg3-1  | 2026-10-20 10:32:22.129 UTC [384] FATAL:  terminating connection due to administrator command
-pg3-1  | 2026-10-20 10:32:22.129 UTC [382] FATAL:  terminating connection due to administrator command
-pg3-1  | 2026-10-20 10:32:22.129 UTC [383] FATAL:  terminating connection due to administrator command
-pg3-1  | 2026-10-20 10:32:22.131 UTC [65] FATAL:  terminating connection due to administrator command
-pg3-1  | 2026-10-20 10:32:22.134 UTC [64] FATAL:  terminating connection due to administrator command
-pg3-1  | 2026-10-20 10:32:22.135 UTC [55] LOG:  background worker "logical replication launcher" (PID 375) exited with exit code 1
-pg3-1  | 2026-10-20 10:32:22.137 UTC [60] LOG:  shutting down
-pg3-1  | 2026-10-20 10:32:22.149 UTC [60] LOG:  checkpoint starting: shutdown immediate
-pg3-1  | 2026-10-20 10:32:22.184 UTC [60] LOG:  checkpoint complete: wrote 362 buffers (2.2%), wrote 4 SLRU buffers; 0 WAL file(s) added, 0 removed, 1 recycled; write=0.025 s, sync=0.004 s, total=0.037 s; sync files=8, longest=0.003 s, average=0.001 s; distance=3816 kB, estimate=18987 kB; lsn=0/1A1B7698, redo lsn=0/1A1B7698
-pg3-1  | 2026-10-20 10:32:22.199 UTC [55] LOG:  database system is shut down
-pg3-1  | 2026-10-20 10:32:23,141 INFO: closed patroni connections to postgres
-pg3-1  | 2026-10-20 10:32:23,463 INFO: postmaster pid=578
-pg3-1  | 2026-10-20 10:32:23.466 UTC [578] LOG:  starting PostgreSQL 18.6 (Debian 18.6-1.pgdg13+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 14.2.0-19) 14.2.0, 64-bit
-pg3-1  | 2026-10-20 10:32:23.466 UTC [578] LOG:  listening on IPv4 address "0.0.0.0", port 5432
-pg3-1  | 2026-10-20 10:32:23.467 UTC [578] LOG:  listening on Unix socket "/var/run/postgresql/.s.PGSQL.5432"
-pg3-1  | 2026-10-20 10:32:23.472 UTC [585] LOG:  database system was shut down at 2026-10-20 10:32:22 UTC
-pg3-1  | 2026-10-20 10:32:23.472 UTC [585] WARNING:  specified neither "primary_conninfo" nor "restore_command"
-pg3-1  | 2026-10-20 10:32:23.472 UTC [585] HINT:  The database server will regularly poll the pg_wal subdirectory to check for files placed there.
-pg3-1  | 2026-10-20 10:32:23.472 UTC [585] LOG:  entering standby mode
-pg3-1  | 2026-10-20 10:32:23.472 UTC [586] FATAL:  the database system is starting up
-pg3-1  | localhost:5432 - rejecting connections
-pg3-1  | localhost:5432 - rejecting connections
-pg3-1  | 2026-10-20 10:32:23.477 UTC [588] FATAL:  the database system is starting up
-pg3-1  | 2026-10-20 10:32:23.477 UTC [585] LOG:  consistent recovery state reached at 0/1A1B7710
-pg3-1  | 2026-10-20 10:32:23.477 UTC [585] LOG:  invalid record length at 0/1A1B7710: expected at least 24, got 0
-pg3-1  | 2026-10-20 10:32:23.477 UTC [585] LOG:  waiting for WAL to become available at 0/1A002000
-pg3-1  | 2026-10-20 10:32:23.477 UTC [578] LOG:  database system is ready to accept read-only connections
-pg3-1  | 2026-10-20 10:32:23,526 INFO: establishing a new patroni heartbeat connection to postgres
-pg3-1  | 2026-10-20 10:32:23,537 INFO: establishing a new patroni restapi connection to postgres
-pg3-1  | 2026-10-20 10:32:23.549 UTC [597] ERROR:  cannot execute INSERT in a read-only transaction
-pg3-1  | 2026-10-20 10:32:23.549 UTC [597] STATEMENT:  INSERT INTO core.ha_probe(probe_bk,payload) VALUES ('E6-7de0438fb06d481682e62518c7a2bdf0','E6-two')
+…
 $ docker compose start etcd2 etcd1
-Container apteka108-hw1-etcd2-1 Starting 
- Container apteka108-hw1-etcd1-1 Starting 
- Container apteka108-hw1-etcd2-1 Started 
- Container apteka108-hw1-etcd1-1 Started
-{"at": "2026-10-20T10:31:44.539603+00:00", "monotonic": 1352959.799411333, "duration_ms": 49.62004185654223, "ok": true, "key": "E6-one-etcd-5c99700412d04e719e3aca649f085c24", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:44.544542+00:00", "monotonic": 1352959.804362125, "duration_ms": 54.38112490810454, "ok": true, "key": "E6-one-etcd-817782312aeb46a0bafa20d0674bbbd6", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:44.544968+00:00", "monotonic": 1352959.804792208, "duration_ms": 55.563332978636026, "ok": true, "key": "E6-one-etcd-ac5d0960bd5d42d0a3418ff9bc4740b9", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:44.548338+00:00", "monotonic": 1352959.808158375, "duration_ms": 58.54195915162563, "ok": true, "key": "E6-one-etcd-628a7a5ce2cc4dee9bdbcefc7f8394cb", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:44.577716+00:00", "monotonic": 1352959.837534041, "duration_ms": 13.207624899223447, "ok": true, "key": "E6-one-etcd-0705c55ad9e0407ca7159d31c2e731da", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:44.579768+00:00", "monotonic": 1352959.839591416, "duration_ms": 6.946250097826123, "ok": true, "key": "E6-one-etcd-5468844b0f9342b19825e6275b6baa20", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:54.464780+00:00", "monotonic": 1352969.724485625, "duration_ms": 3.223625011742115, "ok": true, "key": "E6-one-etcd-51ed8d20100a46feb2e89a21e3c9baa8", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:54.465210+00:00", "monotonic": 1352969.72491575, "duration_ms": 3.6882502026855946, "ok": true, "key": "E6-one-etcd-836a2d1acdd34168b1d0ddabb8d241ae", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:54.466166+00:00", "monotonic": 1352969.725872125, "duration_ms": 3.3254590816795826, "ok": true, "key": "E6-one-etcd-1e0f07c73cbb450a95f2865978b6a594", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:54.490673+00:00", "monotonic": 1352969.7503775, "duration_ms": 3.3579589799046516, "ok": true, "key": "E6-one-etcd-d58a7e2b3c0d4a87aac03b1d7f150bc6", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:54.491217+00:00", "monotonic": 1352969.75092275, "duration_ms": 3.662500064820051, "ok": true, "key": "E6-one-etcd-9b4f60e7f7354707ab63c7f856897eeb", "node": "172.18.0.7", "error": ""}
-{"at": "2026-10-20T10:31:54.492177+00:00", "monotonic": 1352969.751882375, "duration_ms": 3.7597089540213346, "ok": true, "key": "E6-one-etcd-e69c0485f7bb4e308652d64e523401d0", "node": "172.18.0.7", "error": ""}
+…
+{"at": "2026-10-20T12:36:15.397665+00:00", "monotonic": 841.795492123, "duration_ms": 1.7405130000724967, "ok": true, "key": "E6-one-etcd-52a4e91ee1dc4225a1ea3bd542d8f5d1", "node": "172.18.0.6", "error": ""}
+{"at": "2026-10-20T12:36:15.398893+00:00", "monotonic": 841.796720774, "duration_ms": 1.6178800000261617, "ok": true, "key": "E6-one-etcd-a0c9c6f6f09346429fc12275575625e8", "node": "172.18.0.6", "error": ""}
 ```
 
+</details>
+
+
 ## Э7. Наплыв подключений
+
+Этап общего сценария:
+
+```bash
+.venv/bin/python scripts/experiments.py --seconds 60 --event-window 90
+```
 
 | Метрика | Значение |
 |---|---|
 | direct_40_errors | 0 |
-| direct_40_connect_median_ms | 109.395 |
+| direct_40_connect_median_ms | 69.027 |
 | direct_80_errors | 2 |
-| direct_80_connect_median_ms | 175.313 |
+| direct_80_connect_median_ms | 128.03 |
 | direct_160_errors | 82 |
-| direct_160_connect_median_ms | 199.748 |
+| direct_160_connect_median_ms | 181.439 |
 | pool_40_errors | 0 |
-| pool_40_connect_median_ms | 38.232 |
+| pool_40_connect_median_ms | 10.501 |
 | pool_80_errors | 0 |
-| pool_80_connect_median_ms | 40.8 |
+| pool_80_connect_median_ms | 12.178 |
 | pool_160_errors | 0 |
-| pool_160_connect_median_ms | 79.424 |
+| pool_160_connect_median_ms | 17.879 |
 | direct_first_error_at | 80 |
 | pool_first_error_at | не наблюдалось до 160 |
 
-Сравнены одинаковые группы клиентов. В transaction pooling состояние сессии не переносится между транзакциями; SET LOCAL и временные объекты используются внутри одной транзакции.
+При 160 клиентах прямые подключения дали 82 ошибки, через PgBouncer — ни одной. Пул позволил обслужить клиентов без увеличения числа серверных соединений.
+
+<details>
+<summary>Фрагмент исходного вывода</summary>
 
 ```text
 {"route": "direct", "clients": 40, "ok": 40, "errors": 0, "first_error": null}
-{"route": "direct", "clients": 80, "ok": 78, "errors": 2, "first_error": "connection to server at \"localhost\" (127.0.0.1), port 5434 failed: FATAL:  sorry, too many clients already"}
-{"route": "direct", "clients": 160, "ok": 78, "errors": 82, "first_error": "connection to server at \"localhost\" (127.0.0.1), port 5434 failed: FATAL:  sorry, too many clients already"}
-{"route": "pool", "clients": 40, "ok": 40, "errors": 0, "first_error": null}
+{"route": "direct", "clients": 80, "ok": 78, "errors": 2, "first_error": "connection to server at \"localhost\" (::1), port 5433 failed: Connection refused"}
+…
 {"route": "pool", "clients": 80, "ok": 80, "errors": 0, "first_error": null}
 {"route": "pool", "clients": 160, "ok": 160, "errors": 0, "first_error": null}
 ```
+
+</details>
+
 
 ## Итоговая таблица
 
 | Отказ | Кто восстанавливает | Измеренная цена |
 |---|---|---|
 | Наплыв 160 клиентов | PgBouncer | ошибок напрямую: 82; через пул: 0 |
-| Потеря лидера | Patroni и кворум etcd | RTO: 34.953 с; ошибок в окне: 276 |
-| Плановая смена лидера | Patroni и HAProxy | RTO: 4.06 с |
+| Потеря лидера | Patroni и кворум etcd | RTO: 33.803 с; ошибок в окне: 278 |
+| Плановая смена лидера | Patroni и HAProxy | RTO: 4.44 с |
 | Подтверждённые транзакции | Репликация | потеря async: 0; sync: 0 |
 | Потеря одного etcd | Кворум 2/3 | ошибок записи: 0 |
 | Логическое удаление | Резервная копия и восстановление | Не измерялось; бэкапы в этот стенд не включены |
 | Отказ целого ЦОД | Отдельная площадка | Не моделировался |
 
-Отношение аварийного RTO к плановому: 8.609113300492613.
+Отношение аварийного RTO к плановому: 7.613288288288287.
 
-## Изменения после измерений
-
-1. Для денежных операций рассмотрел бы sync: p95 изменился с 10.085 до 9.712 мс; фактическая потеря указана в таблице. Нулевые потери async в одном опыте не гарантируют их отсутствие при другом отказе.
-2. Оставил бы приложение за пулом: при 160 клиентах напрямую получено 82 ошибок, через пул — 0. Перед увеличением серверных лимитов проверил бы одновременную нагрузку четырёх баз.
-3. Для уменьшения наблюдавшегося аварийного RTO 34.953 с проверил бы меньший ttl вместе с loop_wait и retry_timeout. Перед применением нужны отдельные тесты сетевых задержек; в этом запуске параметры не менялись.
 
 ## Ограничения
 
 Репликация не восстанавливает случайное логическое удаление и не заменяет резервные копии. В этом стенде HAProxy и PgBouncer по одному экземпляру; отказ целого узла Docker или ЦОД отдельно не моделируется.
 
+
 ## Пояснения к измерениям
 
-Пояснения ниже добавлены после чтения журнала. Числа и сырые блоки выше сохранены; это не новый прогон.
+Аварийный RTO включает обнаружение отказа, ожидание лидерского TTL, promotion и восстановление клиентского маршрута. При switchover лидер передаёт роль сам. RTO между ACK включает дискретность нагрузки.
 
-### Стенд и воспроизведение
+Async/sync сравнивались одним последовательным прогоном на разных лидерах. Меньший p95 sync не означает ускорения записи. Нулевая потеря async в одном опыте не гарантирует сохранность последнего WAL при другой аварии.
 
-| Параметр | Значение |
-|---|---|
-| Среда | Docker Desktop, aarch64, 8 CPU |
-| RAM Docker | 4 108 828 672 байт, около 3,83 GiB |
-| Диск | Драйвер overlayfs; ёмкость диска в этом опыте не измерялась |
-| Docker / Compose | 29.5.2 / v5.1.4 |
-| PostgreSQL / Patroni | PostgreSQL 18.6 / Patroni 4.1.5 |
-| Узлы | Три PostgreSQL и три etcd в одном Docker-стенде; HAProxy и PgBouncer по одному экземпляру |
-| Маршруты | 6432 — пул; 5000 — лидер; 5001 — реплики; 5432–5434 — прямые PostgreSQL; 8008–8010 — Patroni API |
-| Patroni | ttl=30, loop_wait=10, retry_timeout=10; начало async; в Э5 sync с одной синхронной репликой |
-| Нагрузка записи | Четыре клиента; INSERT и COMMIT в core.ha_probe; пауза после успеха 20 мс; ошибки учитываются отдельно |
-
-Воспроизведение из корня наполненного проекта:
-
-```bash
-python scripts/experiments.py
-```
-
-### Почему аварийный RTO около 35 секунд
-
-Последний async ACK старого лидера — 10:26:02,219 UTC, строка promote нового лидера — около 10:26:33,045, первый ACK нового — 10:26:37,173. До promote прошло около 30,8 с: результат согласуется с ожиданием истечения TTL и циклом Patroni. Затем прошло ещё около 4,1 с до клиентского подтверждения; сюда входят готовность нового primary, проверки маршрута и восстановление соединений. Их отдельные доли не измерялись. Основное RTO рассчитано по monotonic clock, а не по округлённым настенным отметкам.
-
-Плановый switchover занял 4,060 с: лидер сам передал роль, поэтому ожидание истечения TTL не потребовалось. В данном запуске он был в 8,61 раза быстрее аварийного переключения.
-
-### Async и sync
-
-| Метрика | Async | Sync | Изменение sync |
-|---|---:|---:|---:|
-| TPS | 142,101 | 140,700 | −1,401, около −0,99% |
-| Median успешной записи, мс | 3,850 | 4,256 | +0,406, около +10,55% |
-| p95 успешной записи, мс | 10,085 | 9,712 | −0,373, около −3,70% |
-| RTO, с | 34,953 | 32,955 | −1,998 |
-| Потерянные подтверждённые ключи | 0 | 0 | 0 |
-
-Потери sync и async здесь одинаковы, но гарантии режимов различаются. TPS sync оказался примерно на 1% ниже. Меньший p95 sync в одном последовательном запуске не доказывает, что синхронная репликация ускоряет запись: режимы проверялись последовательно на разных лидерах. Для устойчивой оценки цены нужны повторы. p95 относится к успешным попыткам; длительные неуспешные попытки отдельно отражены ошибками и RTO.
-
-### Возврат узлов и границы логов
-
-Оба старых лидера вернулись репликами через **успешный pg_rewind**, затем начали streaming. Это подтверждено дополнительными полными логами уже проведённых опытов; повторных аварий для проверки не выполнялось.
-
-| Опыт / узел | Новый лидер | Timeline до → после | Запуск pg_rewind, UTC | Успешное завершение, UTC | Streaming, UTC |
-|---|---|---|---|---|---|
-| Э3 / pg3 | pg1 | 3 → 4 | 10:27:24,482 | 10:27:28,922, exit code=0 | 10:27:29,572 |
-| Э5 / pg2 | pg3 | 5 → 6 | 10:31:37,260 | 10:31:40,461, exit code=0 | 10:31:41,140 |
-
-Полные источники: [pg3 после async failover](experiments/20261020T103259Z-rejoin-pg3.md), [pg2 после sync failover](experiments/20261020T103259Z-rejoin-pg2.md). В них видны точки расхождения timeline и возврат к общему checkpoint. После продвижения нового лидера истории WAL разошлись; pg_rewind вернул старый узел к общей истории, затем он получил WAL нового лидера.
-
-В первоначальных таблицах `pg_rewind_call_in_log=False` сохранено как результат старого поиска только в последних 80 строках. Это **ложноотрицательное обнаружение в обрезанном логе**, а не отсутствие rewind. В новой версии сборщика ограничение `--tail 80` для возврата узла удалено: сохраняется весь интервал начиная с запуска узла. [Исходный журнал](experiments/20261020T103259Z-complete.md) оставлен без изменений.
-
-Время ожидания 8,651 с для pg3 и 8,901 с для pg2 включает старт контейнера, восстановление, готовность кластера и догон WAL. `wal_since_receiver_start_bytes` — WAL от start LSN текущего receiver, не полный объём данных, переданный pg_rewind. Числа исходного опыта при уточнении способа возврата не менялись.
-
-### Кворум и пул
-
-Ошибка одного endpoint в `etcdctl endpoint health` ожидаема после остановки etcd1. Два оставшихся endpoint здоровы; 1 479 успешных записей без ошибок подтверждают сохранение кворума. После остановки второго etcd лидер выполнил demotion; в логе видны переход в standby и отказ INSERT в read-only транзакции. Значение 23,716 с отсчитывается от начала команды остановки второго etcd до фиксации ошибки и проверки чтения, поэтому это наблюдаемое время сценария, а не отдельный таймер точного момента потери кворума. После возврата etcd кластер восстановился; полный чекер после опытов подтвердил работающую репликацию.
-
-При прямых подключениях ошибки начались в группе из 80 клиентов, при 160 получено 82 ошибки. Это согласуется с max_connections=80 и уже занятыми соединениями. Через PgBouncer все 160 завершились успешно: клиенты ожидали доступные серверные соединения. Медиана установки соединения не включает всё ожидание выполнения запроса и не является полной задержкой транзакции.
+WAL при rejoin отсчитывается от start LSN текущего receiver, это не полный объём pg_rewind; способ восстановления подтверждают строки Patroni. В Э6 время включает остановку второго etcd и проверку чтения. В Э7 время подключения не включает всё ожидание выполнения транзакции.

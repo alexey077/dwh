@@ -28,7 +28,9 @@ def container_submission(source):
         source["ha"][key] = make_dsn(
             **(parse_dsn(source["ha"][key]) | {"host": host, "port": str(port)})
         )
-    source["ha"]["patroni_api"] = os.environ.get("PATRONI_API", "http://pg1:8008")
+    source["ha"]["patroni_api"] = os.environ.get(
+        "CLUSTER_STATUS_API", "http://cluster-status:8011"
+    )
     return source
 
 

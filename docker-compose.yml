@@ -130,6 +130,26 @@ services:
       retries: 30
     restart: unless-stopped
 
+  cluster-status:
+    image: apteka108-patroni:hw1
+    build:
+      context: .
+      dockerfile: infra/patroni/Dockerfile
+    user: postgres
+    entrypoint: [python, /project/scripts/cluster_status.py]
+    volumes: ['./scripts/cluster_status.py:/project/scripts/cluster_status.py:ro']
+    ports: ['127.0.0.1:8011:8011']
+    depends_on:
+      pg1: {condition: service_healthy}
+      pg2: {condition: service_healthy}
+      pg3: {condition: service_healthy}
+    healthcheck:
+      test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8011/health', timeout=8)"]
+      interval: 10s
+      timeout: 9s
+      retries: 30
+    restart: unless-stopped
+
   tools:
     image: apteka108-patroni:hw1
     build:
@@ -143,10 +163,12 @@ services:
       DWH_CONTAINER: '1'
       ADMIN_DSN: postgresql://postgres:postgres@haproxy:5000/postgres
       PATRONI_API: http://pg1:8008
+      CLUSTER_STATUS_API: http://cluster-status:8011
     volumes: ['./:/project']
     depends_on:
       init: {condition: service_completed_successfully}
       pgbouncer: {condition: service_healthy}
+      cluster-status: {condition: service_healthy}
 
 volumes:
   pg1_data:
